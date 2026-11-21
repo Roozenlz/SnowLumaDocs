@@ -7,9 +7,10 @@ const config = {
   // Static export so the site can be hosted on GitHub Pages.
   output: 'export',
   reactStrictMode: true,
-  
-  basePath: '/SnowLumaDocs',
-  assetPrefix: '/SnowLumaDocs/',
+
+  // This site uses the custom domain snowluma-doc.roozen.top at the domain root.
+  // Do not configure /SnowLumaDocs here, or generated CSS and asset URLs will
+  // incorrectly include the repository name.
 
   // Static export cannot run the Next image optimizer (it requires a
   // running server). All images go through unoptimized.
