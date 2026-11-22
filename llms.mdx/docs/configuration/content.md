@@ -1,0 +1,178 @@
+# 配置参考 (/zh/docs/configuration)
+
+
+
+SnowLuma 的配置分两块，都是 JSON：
+
+* **`config/onebot.json` + `config/onebot_<uin>.json`** —— OneBot 网络适配器（HTTP / WebSocket 监听端、反向 WS、HTTP 上报）。
+* **`config/runtime.json`** —— SnowLuma 进程级运行时设置（WebUI 端口、自动注入开关）。
+
+首次运行会自动生成两个文件，并在加载时归一化字段。
+
+## OneBot 配置 [#onebot-配置]
+
+### 文件位置 [#文件位置]
+
+```text
+config/onebot.json          # 全局默认
+config/onebot_<uin>.json    # 账号级覆盖
+```
+
+* **全局配置**：`config/onebot.json`，作为所有账号的默认值。
+* **账号配置**：`config/onebot_<uin>.json`，会覆盖全局配置。
+* **自动生成**：账号配置缺失或缺 access token 时，SnowLuma 会写入规范化后的默认配置。
+
+### 默认配置 [#默认配置]
+
+适配器按类型分组放在 `networks` 对象下：
+
+```json
+{
+  "networks": {
+    "httpServers": [
+      {
+        "name": "http-default",
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 3000,
+        "path": "/",
+        "accessToken": "自动生成",
+        "messageFormat": "array",
+        "reportSelfMessage": false
+      }
+    ],
+    "httpClients": [],
+    "wsServers": [
+      {
+        "name": "ws-default",
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 3001,
+        "path": "/",
+        "role": "Universal",
+        "accessToken": "自动生成",
+        "messageFormat": "array",
+        "reportSelfMessage": false
+      }
+    ],
+    "wsClients": []
+  },
+  "musicSignUrl": ""
+}
+```
+
+<Callout type="info">
+  **从旧格式迁移**：早期版本把 `httpServers` / `wsServers` 等数组直接放在顶层，`httpPostEndpoints` 用于上报。当 SnowLuma 检测到这种结构时会自动迁移到新的 `networks` 对象并把 `httpPostEndpoints` 改名为 `httpClients`，回写到磁盘。手动维护配置请直接用新格式。
+</Callout>
+
+### 通用字段 [#通用字段]
+
+所有适配器都共享下列字段（`NetworkBase`）：
+
+| 字段                  | 类型     | 默认值     | 说明                                                 |
+| ------------------- | ------ | ------- | -------------------------------------------------- |
+| `name`              | string | 必填      | 同类型数组内唯一的标识，热重载按 `(kind, name)` 寻址。                |
+| `enabled`           | bool   | `true`  | 设为 `false` 可保留配置但不启动该适配器。                          |
+| `accessToken`       | string | 自动生成    | 鉴权令牌；OneBot Bearer / `?access_token=`。             |
+| `messageFormat`     | string | `array` | `array` 或 `string`，决定事件中 `message` 字段是段数组还是字符串。    |
+| `reportSelfMessage` | bool   | `false` | 为 `true` 时该适配器会收到 `post_type='message_sent'` 自身消息。 |
+
+### `httpServers` [#httpservers]
+
+启动 OneBot HTTP API 服务。
+
+| 字段     | 类型     | 默认值       | 说明        |
+| ------ | ------ | --------- | --------- |
+| `host` | string | `0.0.0.0` | 监听地址。     |
+| `port` | number | `3000`    | 监听端口。     |
+| `path` | string | `/`       | API 路径前缀。 |
+
+### `httpClients` [#httpclients]
+
+主动把事件 POST 到外部端点（旧名 `httpPostEndpoints`）。
+
+| 字段          | 类型     | 默认值    | 说明    |
+| ----------- | ------ | ------ | ----- |
+| `url`       | string | 必填     | 上报地址。 |
+| `timeoutMs` | number | `5000` | 请求超时。 |
+
+### `wsServers` [#wsservers]
+
+启动 OneBot WebSocket 服务。
+
+| 字段     | 类型     | 默认值         | 说明                                               |
+| ------ | ------ | ----------- | ------------------------------------------------ |
+| `host` | string | `0.0.0.0`   | 监听地址。                                            |
+| `port` | number | `3001`      | 监听端口。                                            |
+| `path` | string | `/`         | WebSocket 路径。                                    |
+| `role` | string | `Universal` | `Api`、`Event` 或 `Universal`（**大写驼峰**，旧的小写写法已废弃）。 |
+
+### `wsClients` [#wsclients]
+
+主动连接反向 WebSocket 服务。
+
+| 字段                    | 类型     | 默认值         | 说明                    |
+| --------------------- | ------ | ----------- | --------------------- |
+| `url`                 | string | 必填          | 反向 WebSocket 地址。      |
+| `role`                | string | `Universal` | 同 `wsServers.role`。   |
+| `reconnectIntervalMs` | number | `5000`      | 重连间隔，最小会被规范化为 `1000`。 |
+
+### `musicSignUrl` [#musicsignurl]
+
+可选；自定义音乐卡片签名服务地址。空字符串表示禁用。
+
+## 运行时配置（`runtime.json`） [#运行时配置runtimejson]
+
+`config/runtime.json` 记录 SnowLuma 进程级设置，**不分账号**。文件缺失或字段不全时，加载会自动补齐并回写。
+
+```json
+{
+  "webuiPort": 5099,
+  "webuiHost": "127.0.0.1",
+  "hookAutoLoad": false,
+  "webuiTls": { "enabled": false },
+  "trustProxy": "",
+  "logMaxTotalMb": 1024,
+  "logRetainDays": 7,
+  "logPerUin": false
+}
+```
+
+| 字段                 | 类型     | 默认值         | 说明                                                            |
+| ------------------ | ------ | ----------- | ------------------------------------------------------------- |
+| `webuiPort`        | number | `5099`      | WebUI 监听端口；非 `1..65535` 的整数会被回退到默认值。                          |
+| `webuiHost`        | string | `127.0.0.1` | WebUI 绑定地址。**默认只监听本机**，要从别的机器访问必须改成 `0.0.0.0`。属于监听器设置，改动需重启。  |
+| `hookAutoLoad`     | bool   | `false`     | 是否自动把 Hook 注入到新发现的 QQ 进程。Docker 镜像通过 `supervisord.conf` 打开。   |
+| `webuiTls.enabled` | bool   | `false`     | 用 `config/cert.pem` + `config/key.pem` 起 HTTPS。属于监听器设置，改动需重启。 |
+| `trustProxy`       | string | `""`        | 信任的反向代理来源，决定 WebUI 如何解析客户端 IP；空串表示谁都不信。                       |
+| `logMaxTotalMb`    | number | `1024`      | 日志根目录下所有文件的合计容量上限。                                            |
+| `logRetainDays`    | number | `7`         | 按自然日保留天数；`0` 关闭按日期清理。                                         |
+| `logPerUin`        | bool   | `false`     | 除共享日志外，再把带 UIN 的日志行复制到 `logs/<uin>/`。                         |
+
+<Callout type="warn">
+  **`webuiHost` 默认是 `127.0.0.1`**，只监听本机。Docker 用户请用 `SNOWLUMA_WEBUI_HOST=0.0.0.0` 覆盖（镜像的端口映射需要它才能从宿主机访问）。
+</Callout>
+
+## 环境变量 [#环境变量]
+
+环境变量**优先于** `runtime.json`，并且只作用于内存，不会被写回磁盘——适合 Docker 或启动器按次覆盖。
+
+| 变量                                                 | 对应字段               | 说明                                        |
+| -------------------------------------------------- | ------------------ | ----------------------------------------- |
+| `SNOWLUMA_WEBUI_PORT`                              | `webuiPort`        | WebUI 监听端口。                               |
+| `SNOWLUMA_WEBUI_HOST`                              | `webuiHost`        | WebUI 绑定地址；Docker 里设 `0.0.0.0`。           |
+| `SNOWLUMA_WEBUI_TLS`                               | `webuiTls.enabled` | `1` / `true` 起 HTTPS，`0` / `false` 关闭。    |
+| `SNOWLUMA_WEBUI_TRUST_PROXY`                       | `trustProxy`       | 信任的反向代理来源；写 `0` / `off` 表示谁都不信。           |
+| `SNOWLUMA_LOG_MAX_TOTAL_MB`                        | `logMaxTotalMb`    | 日志容量上限。                                   |
+| `SNOWLUMA_LOG_RETAIN_DAYS`                         | `logRetainDays`    | 日志保留天数。                                   |
+| `SNOWLUMA_LOG_PER_UIN`                             | `logPerUin`        | 是否按 UIN 分目录。                              |
+| `SNOWLUMA_HOOK_AUTOLOAD`                           | `hookAutoLoad`     | `1` / `true` 强制开启自动注入；`0` / `false` 关闭。   |
+| `SNOWLUMA_LOG_LEVEL`                               | —                  | 日志级别：`error` / `warn` / `info` / `debug`。 |
+| `SNOWLUMA_VERBOSE_WARMUP`                          | —                  | 设为 `1` 输出更详细的好友、群、群成员预热日志。                |
+| `SNOWLUMA_DEV_MODE`                                | —                  | 设为 `1` 启用开发模式（WebUI 鉴权放宽，仅本地调试用）。         |
+| `SNOWLUMA_DEV_WEBUI`                               | —                  | 设为 `1` 在 dev mode 下强制启用内置 WebUI。          |
+| `SNOWLUMA_ACCEPT_EULA` / `SNOWLUMA_ACCEPT_PRIVACY` | —                  | 都设为 `1` 时跳过首次启动的协议确认页面，供无人值守部署使用。         |
+
+## 端口冲突 [#端口冲突]
+
+`3000` / `3001` / `5099` 被占用时，修改对应配置文件的 `port` / `webuiPort` 后重启 SnowLuma。Docker 用户也可以直接把宿主机端口映射到不同端口（见 [Docker 部署](/docs/docker)）。

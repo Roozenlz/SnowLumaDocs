@@ -1,0 +1,420 @@
+# Docker 部署 (/zh/docs/docker)
+
+
+
+SnowLuma 在 Linux 上**只通过 Docker 运行**。镜像内置 Linux QQ + Xvfb + VNC + noVNC + supervisord，开箱即用；宿主机只需要 Docker。
+
+镜像的构建材料（`Dockerfile`、`start.sh`、`supervisord.conf`、`docker-compose.yml`）就在主仓的 [`docker/`](https://github.com/Roozenlz/SnowLuma/tree/main/docker) 目录里，构建与发布由主仓自己的 GitHub Actions 完成，不依赖任何外部仓库。
+
+## 镜像信息 [#镜像信息]
+
+| 项  | 值                                                       |
+| -- | ------------------------------------------------------- |
+| 镜像 | `roozen/snowluma:latest`（或具体 tag，如 `:v2.4.3`）           |
+| 架构 | `linux/amd64`、`linux/arm64`                             |
+| 基础 | `node:22-bookworm-slim`                                 |
+| 内置 | Linux QQ、Xvfb、VNC、noVNC、supervisord、SnowLuma `lite` 发行包 |
+
+镜像不在容器内重新编译 SnowLuma —— 它消费主仓 GitHub Release 的预编译 `lite` tarball，所以发版与镜像构建解耦。
+
+### 标签策略 [#标签策略]
+
+| 标签          | 由谁发布            | 说明                                   |
+| ----------- | --------------- | ------------------------------------ |
+| `latest`    | `release.yml`   | 只随**稳定版**（tag 不含 `-`）移动，始终指向最新的正式版本。 |
+| `v2.4.3`    | `release.yml`   | 每个 tag 一个，与 GitHub Release 一一对应。     |
+| `dev`       | `dev-build.yml` | `dev` 分支每次推送滚动更新，只构建 `linux/amd64`。  |
+| `dev-<sha>` | `dev-build.yml` | 同一份构建的不可变快照，便于回滚定位。                  |
+
+`dev` 镜像只用于联调，不要用在生产环境。
+
+## 端口 [#端口]
+
+| 端口     | 用途                     |
+| ------ | ---------------------- |
+| `5900` | VNC（远程桌面，密码登录 QQ 用）    |
+| `6081` | noVNC（浏览器版 VNC，无客户端访问） |
+| `5099` | SnowLuma WebUI         |
+| `3000` | OneBot HTTP（默认）        |
+| `3001` | OneBot WebSocket（默认）   |
+
+## 宿主机准备：放开 ptrace 限制 [#宿主机准备放开-ptrace-限制]
+
+<Callout type="warn">
+  **这一步必须先做，否则容器起来后 hook 注入会失败。**
+</Callout>
+
+SnowLuma 的 native addon 通过 `ptrace` 把 hook 注入到容器内的 QQ 进程。现代 Linux 发行版（Ubuntu / Debian / Arch 等）默认把 `kernel.yama.ptrace_scope` 设为 `1` 或更高，**即使容器启动加了 `--cap-add=SYS_PTRACE`，注入也会被宿主内核拦掉**。
+
+在宿主机上**只需要执行一次**：
+
+```bash
+echo 'kernel.yama.ptrace_scope=0' | sudo tee /etc/sysctl.d/99-snowluma-ptrace.conf
+sudo sysctl --system
+```
+
+验证是否生效：
+
+```bash
+sysctl kernel.yama.ptrace_scope
+# 期望输出：kernel.yama.ptrace_scope = 0
+```
+
+写到 `/etc/sysctl.d/99-snowluma-ptrace.conf` 是为了让设置在重启后自动恢复。如果你的环境对宿主机安全有更严格要求（比如多租户、面向公网），请考虑使用受信任的隔离机制（独立物理机 / VM）替代这一步。
+
+## 一行 docker run [#一行-docker-run]
+
+```bash
+docker run -d \
+  --name snowluma \
+  --restart unless-stopped \
+  --shm-size=1g \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  -e VNC_PASSWD=vncpasswd \
+  -p 5900:5900 \
+  -p 6081:6081 \
+  -p 5099:5099 \
+  -p 3000:3000 \
+  -p 3001:3001 \
+  -v snowluma-data:/app/snowluma-data \
+  -v snowluma-qq-config:/app/.config \
+  -v snowluma-qq-data:/app/.local/share \
+  roozen/snowluma:latest
+```
+
+<Callout type="warn">
+  `--cap-add=SYS_PTRACE` 和 `--security-opt seccomp=unconfined` **不能省**。SnowLuma 的 native addon 通过 ptrace 把 hook 注入 QQ 进程，默认 seccomp profile 会拦截。
+</Callout>
+
+`--shm-size=1g` 是 QQ（基于 Chromium）的运行要求，容器默认 `/dev/shm` 太小会崩。
+
+## docker-compose [#docker-compose]
+
+更推荐用 Compose。主仓 [`docker/docker-compose.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/docker/docker-compose.yml) 已经写好，直接拉下来用即可。
+
+```yaml
+services:
+  snowluma:
+    image: ${SNOWLUMA_IMAGE:-roozen/snowluma:latest}
+    container_name: ${SNOWLUMA_CONTAINER:-snowluma}
+    restart: unless-stopped
+    shm_size: 1gb
+    # 每个 QQ 实例都是完整的 Chromium 进程，多开时默认的 1024 个 fd 不够用。
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 1048576
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      VNC_PASSWD: ${VNC_PASSWD:-vncpasswd}
+      SNOWLUMA_UID: ${SNOWLUMA_UID:-1000}
+      SNOWLUMA_GID: ${SNOWLUMA_GID:-1000}
+      SNOWLUMA_WEBUI_HOST: ${SNOWLUMA_WEBUI_HOST:-0.0.0.0}
+      SNOWLUMA_WEBUI_PORT: ${SNOWLUMA_WEBUI_PORT:-5099}
+      SNOWLUMA_LOG_LEVEL: ${SNOWLUMA_LOG_LEVEL:-info}
+      SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x24}
+      SNOWLUMA_HOOK_AUTOLOAD: ${SNOWLUMA_HOOK_AUTOLOAD:-1}
+      SNOWLUMA_QQ_FLAGS: "${SNOWLUMA_QQ_FLAGS:-}"
+      SNOWLUMA_EXTRA_QQ_HOMES: "${SNOWLUMA_EXTRA_QQ_HOMES:-}"
+    ports:
+      # noVNC / WebUI / VNC 默认只绑回环；需要外部访问时改 SNOWLUMA_BIND_IP。
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${VNC_PORT:-5900}:5900"
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${NOVNC_PORT:-6081}:6081"
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${SNOWLUMA_WEBUI_HOST_PORT:-5099}:${SNOWLUMA_WEBUI_PORT:-5099}"
+      # OneBot 供其他容器或机器人连接，保留全网卡。
+      - "${ONEBOT_HTTP_PORT:-3000}:3000"
+      - "${ONEBOT_WS_PORT:-3001}:3001"
+    volumes:
+      - snowluma-data:/app/snowluma-data
+      - snowluma-qq-config:/app/.config
+      - snowluma-qq-data:/app/.local/share
+
+volumes:
+  snowluma-data:
+  snowluma-qq-config:
+  snowluma-qq-data:
+```
+
+`ulimits.nofile` 是给多开准备的：单账号跑不出问题，但每个 QQ 都是完整的 Chromium 进程，三四个号一起跑就会撞到默认的 1024 个文件描述符上限，日志里表现为 `EMFILE: too many open files`。
+
+`ports` 里 noVNC / WebUI / VNC 默认只绑 `127.0.0.1`，公网上扫不到。要从别的机器访问有两种办法：
+
+```bash
+# 1. 临时放开到所有网卡（注意先改掉 VNC_PASSWD）
+SNOWLUMA_BIND_IP=0.0.0.0 docker compose -f docker/docker-compose.yml up -d
+
+# 2. 推荐：保持回环，走 SSH 隧道
+ssh -L 5099:127.0.0.1:5099 -L 6081:127.0.0.1:6081 user@server
+# 然后本地打开 http://localhost:5099 和 http://localhost:6081
+```
+
+启动（在仓库根目录执行）：
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+升级镜像：
+
+```bash
+docker compose -f docker/docker-compose.yml pull
+docker compose -f docker/docker-compose.yml up -d
+```
+
+只想跟着某个具体版本走的，在 `.env` 里固定：
+
+```bash
+SNOWLUMA_IMAGE=roozen/snowluma:v2.4.3
+```
+
+## 环境变量 [#环境变量]
+
+| 变量                        | 默认             | 说明                                                                              |
+| ------------------------- | -------------- | ------------------------------------------------------------------------------- |
+| `VNC_PASSWD`              | `vncpasswd`    | VNC / noVNC 登录密码。**改成自己的**，不然别人也能进容器里看你 QQ。                                     |
+| `SNOWLUMA_UID`            | `1000`         | 容器内 `snowluma` 用户的 uid。和你挂载卷的宿主属主匹配。                                            |
+| `SNOWLUMA_GID`            | `1000`         | 容器内 `snowluma` 用户的 gid。                                                         |
+| `SNOWLUMA_WEBUI_HOST`     | `0.0.0.0`      | WebUI 绑定地址。程序本身默认只监听 `127.0.0.1`，镜像通过这个变量放开，否则端口映射进不来。                          |
+| `SNOWLUMA_WEBUI_PORT`     | `5099`         | WebUI 监听端口（容器内）。                                                                |
+| `SNOWLUMA_LOG_LEVEL`      | `info`         | `error` / `warn` / `info` / `debug`。                                            |
+| `SNOWLUMA_SCREEN`         | `1920x1080x24` | Xvfb 分辨率 + 色深。                                                                  |
+| `SNOWLUMA_HOOK_AUTOLOAD`  | `1`            | 镜像默认开自动注入。设 `0` 切回手动 Load 流程。                                                   |
+| `SNOWLUMA_QQ_FLAGS`       | 空              | 追加给 QQ 的启动参数，空格分隔。无 GPU 环境可设 `--disable-gpu --disable-software-rasterizer` 省内存。 |
+| `SNOWLUMA_EXTRA_QQ_HOMES` | 空              | 额外的 QQ 账号 `HOME` 目录，逗号或空格分隔；每个目录由 supervisord 单独托管。见[多开 QQ](#多开-qq多账号)。         |
+
+环境变量优先级高于 `runtime.json`，所以 Docker 用环境变量覆盖最方便。
+
+## 数据卷 [#数据卷]
+
+| 卷                    | 容器路径                 | 内容                                                                      |
+| -------------------- | -------------------- | ----------------------------------------------------------------------- |
+| `snowluma-data`      | `/app/snowluma-data` | SnowLuma 配置、缓存、SDB 等。`config/onebot.json` 和 `config/runtime.json` 都在这里。 |
+| `snowluma-qq-config` | `/app/.config`       | QQ 客户端配置。                                                               |
+| `snowluma-qq-data`   | `/app/.local/share`  | QQ 用户数据（登录态、缓存等）。                                                       |
+
+**升级镜像不要删这三个卷**，否则会丢登录态和配置。
+
+## 首次登录 [#首次登录]
+
+1. 启动容器后用浏览器打开 `http://<IP>:6081/`（noVNC），输入 `VNC_PASSWD`。
+2. 在远程桌面里能看到 QQ 已自动起来，扫码登录。
+3. 登录完成后 hook 会自动从被动观察切到工作模式，无需在 WebUI 里手动 Load。
+4. 浏览器打开 `http://<IP>:5099/` 访问 SnowLuma WebUI。
+
+### 找 WebUI 临时密码 [#找-webui-临时密码]
+
+首次启动会在日志里输出一次性密码：
+
+```bash
+docker logs snowluma 2>&1 | grep -E "临时密码|initial credentials" | tail -n 1
+```
+
+只要密码字符串：
+
+```bash
+docker logs snowluma 2>&1 | \
+  sed -nE 's/.*(临时密码: |initial credentials: user=admin password=)([^[:space:]]+).*/\2/p' | tail -n 1
+```
+
+<Callout type="info">
+  临时密码**只在全新数据卷首次启动时**输出一次。复用旧卷 / 重启都不会重新生成。
+</Callout>
+
+## 多开 QQ（多账号） [#多开-qq多账号]
+
+Linux QQ 自带单实例锁：在已有 QQ 跑着的桌面里直接再点一次 QQ 图标，只会把已有窗口聚焦，**起不来第二个进程**。锁文件落在 `$HOME/.config/QQ/SingletonLock`，所以每个实例必须有自己的 `HOME`。
+
+SnowLuma 一侧不需要任何额外配置：[HookManager](https://github.com/Roozenlz/SnowLuma/blob/main/packages/bridge/src/hook-manager.ts) 会遍历所有 QQ 主进程，新启动一个就自动注入一个，每个 UIN 拉一个独立 `OneBotInstance`，配置存到对应的 `config/onebot_<uin>.json`。
+
+### 用 `SNOWLUMA_EXTRA_QQ_HOMES` 声明（推荐） [#用-snowluma_extra_qq_homes-声明推荐]
+
+把额外的 `HOME` 目录写进变量即可，每个目录会由 supervisord 单独托管一个 QQ 进程——崩溃后**只重启那一个账号**，不会连累其他号：
+
+```yaml
+services:
+  snowluma:
+    environment:
+      SNOWLUMA_EXTRA_QQ_HOMES: /app/qq-acct2,/app/qq-acct3
+    volumes:
+      - snowluma-data:/app/snowluma-data
+      - snowluma-qq-config:/app/.config
+      - snowluma-qq-data:/app/.local/share
+      - snowluma-qq2:/app/qq-acct2     # 第二个账号的完整 HOME
+      - snowluma-qq3:/app/qq-acct3     # 第三个账号
+
+volumes:
+  snowluma-data:
+  snowluma-qq-config:
+  snowluma-qq-data:
+  snowluma-qq2:
+  snowluma-qq3:
+```
+
+路径用逗号或空格分隔。开头的 `/app`（主账号）会被自动跳过，重复路径和相对路径会被忽略并在日志里给出提示。目录不存在时会在启动阶段自动创建。
+
+启动后 `docker logs snowluma` 会打印类似：
+
+```text
+supervisord: 3 QQ program(s), no extra flags, config: /etc/supervisord.run.conf
+```
+
+每个账号对应一个 `[program:qq-<目录名>]`，可用 `supervisorctl status` 单独查看：
+
+```bash
+docker exec snowluma supervisorctl status
+# qq                       RUNNING
+# qq-qq-acct2              RUNNING
+# qq-qq-acct3              RUNNING
+# snowluma                 RUNNING
+```
+
+<Callout type="info">
+  **别忘了挂卷。** 只声明了 `SNOWLUMA_EXTRA_QQ_HOMES` 而没给对应目录挂卷时，账号能正常登录，但容器重建后登录态会丢。
+</Callout>
+
+### 手动在 noVNC 桌面里启（临时用） [#手动在-novnc-桌面里启临时用]
+
+只想临时开一个号、不写进 compose 时，在 noVNC 桌面终端里：
+
+```bash
+mkdir -p /app/qq-temp
+HOME=/app/qq-temp qq --no-sandbox &
+disown
+```
+
+`disown` 让 QQ 与终端解绑——关掉终端窗口 QQ 不会跟着退出。这种方式不会自动重启，容器重启后需要重来。
+
+### 限制 & 注意 [#限制--注意]
+
+* **每个 QQ 实例独占自己的 `HOME`** —— 别让两个 QQ 共用同一个 `HOME`，会冲突。
+* **资源**：每个 QQ 进程跑 Chromium 大概吃 300-500MB 内存，`--shm-size` 主账号 1GB 够用，多开建议加到 `2gb` 或更高。
+* **noVNC 同屏可见**：多个 QQ 窗口都在同一个 Xvfb 桌面里，VNC 进去可以分别操作。如果只想登一次就走，登完后把 QQ 窗口最小化即可，不会影响 hook。
+* **WebUI 自动列出所有 UIN**：SnowLuma 不需要单独配置就能识别新登录的账号，WebUI / `get_login_info` 都会出现新 UIN。
+
+## 自动注入 [#自动注入]
+
+镜像默认开 `SNOWLUMA_HOOK_AUTOLOAD=1`：容器一启动就把 hook 注入 QQ 主进程（被动观察），扫码登录完成后 hook 自动切到工作模式。supervisor 让 QQ 崩溃自动重启时也走同样流程。
+
+### 关闭自动注入 [#关闭自动注入]
+
+想保留传统的"WebUI 里手动 Load"流程：
+
+```bash
+docker run -e SNOWLUMA_HOOK_AUTOLOAD=0 ... roozen/snowluma:latest
+```
+
+或在 `docker-compose.yml` 改 `SNOWLUMA_HOOK_AUTOLOAD: 0`，或编辑持久卷里的 `/app/snowluma-data/config/runtime.json` 设 `"hookAutoLoad": false`。环境变量优先。
+
+## 常用运维 [#常用运维]
+
+进容器：
+
+```bash
+docker exec -it snowluma bash
+```
+
+查日志：
+
+```bash
+docker logs -f snowluma
+```
+
+只看 SnowLuma 主进程日志（过滤掉 QQ 自己的输出）：
+
+```bash
+docker logs -f snowluma 2>&1 | grep -v "QtNetwork\|GLib\|libQt6"
+```
+
+进入 SnowLuma 数据目录：
+
+```bash
+docker exec -it snowluma bash -c "cd /app/snowluma-data && ls -la"
+```
+
+修改 OneBot 配置：编辑 `/app/snowluma-data/config/onebot_<uin>.json`，重启容器：
+
+```bash
+docker restart snowluma
+```
+
+## 端口冲突 [#端口冲突]
+
+宿主机端口被占用时，调宿主侧映射即可，容器内端口不变。例：把 OneBot HTTP 改为宿主的 `8080`：
+
+```yaml
+ports:
+  - "8080:3000"   # 宿主 8080 → 容器 3000
+```
+
+或通过环境变量（Compose 模板已支持）：
+
+```bash
+ONEBOT_HTTP_PORT=8080 docker compose -f docker/docker-compose.yml up -d
+```
+
+## 自己构建镜像 [#自己构建镜像]
+
+构建上下文是主仓的 `docker/` 目录，Dockerfile 从上下文里读 `SnowLuma.Framework.tar.gz`。
+
+### 用已发布的 Release 构建 [#用已发布的-release-构建]
+
+```bash
+git clone --depth 1 https://github.com/Roozenlz/SnowLuma.git
+cd SnowLuma
+
+TAG=v2.4.3
+gh release download "$TAG" \
+  --pattern "SnowLuma-$TAG-linux-x64-lite.tar.gz" \
+  --output docker/SnowLuma.Framework.tar.gz --clobber
+
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag roozen/snowluma:$TAG docker --load
+```
+
+### 用本地构建的产物 [#用本地构建的产物]
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build:all
+
+tar -czf docker/SnowLuma.Framework.tar.gz -C dist .
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag snowluma:local docker --load
+```
+
+`dist/` 必须包含完整的运行时布局（`index.mjs`、`native/`、`webui/`、`package.json` 等），`pnpm build:all` 产出的即是。
+
+### 多架构 [#多架构]
+
+本地 `buildx build` 一次只能 `--load` 单个架构。需要 amd64 + arm64 合并 manifest 时走 CI：
+
+* **发版自动构建**：[`release.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/.github/workflows/release.yml) 在 Release 发布后调用同一套 `docker-image.yml`。
+* **重建历史版本**：手动跑 [Rebuild Docker Image](https://github.com/Roozenlz/SnowLuma/actions/workflows/dispatch-docker-release.yml)，填 `snowluma_tag` 即可，不用重新打 tag。
+
+### 镜像里的 QQ 版本 [#镜像里的-qq-版本]
+
+Dockerfile 从腾讯 CDN 下载 Linux QQ 的 `.deb`，版本由三个 build arg 固定：
+
+```dockerfile
+ARG QQ_VERSION=3.2.35-54395
+ARG QQ_CHANNEL=9.9.37/beta
+ARG QQ_HASH=816b3c79
+```
+
+腾讯每次发版都会换目录和内容哈希，旧值直接 404。构建日志出现 `Unable to download linuxqq_*.deb` 时，去 [AUR 的 linuxqq PKGBUILD](https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=linuxqq) 取新的三元组，覆盖后重试：
+
+```bash
+docker buildx build \
+  --build-arg QQ_VERSION=3.2.36-xxxxx \
+  --build-arg QQ_CHANNEL=9.9.38/beta \
+  --build-arg QQ_HASH=xxxxxxxx \
+  --file docker/Dockerfile --tag roozen/snowluma:test docker
+```
+
+## 安全提示 [#安全提示]

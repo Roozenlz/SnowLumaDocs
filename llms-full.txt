@@ -1,0 +1,3096 @@
+# 配置参考 (/zh/docs/configuration)
+
+
+
+SnowLuma 的配置分两块，都是 JSON：
+
+* **`config/onebot.json` + `config/onebot_<uin>.json`** —— OneBot 网络适配器（HTTP / WebSocket 监听端、反向 WS、HTTP 上报）。
+* **`config/runtime.json`** —— SnowLuma 进程级运行时设置（WebUI 端口、自动注入开关）。
+
+首次运行会自动生成两个文件，并在加载时归一化字段。
+
+## OneBot 配置 [#onebot-配置]
+
+### 文件位置 [#文件位置]
+
+```text
+config/onebot.json          # 全局默认
+config/onebot_<uin>.json    # 账号级覆盖
+```
+
+* **全局配置**：`config/onebot.json`，作为所有账号的默认值。
+* **账号配置**：`config/onebot_<uin>.json`，会覆盖全局配置。
+* **自动生成**：账号配置缺失或缺 access token 时，SnowLuma 会写入规范化后的默认配置。
+
+### 默认配置 [#默认配置]
+
+适配器按类型分组放在 `networks` 对象下：
+
+```json
+{
+  "networks": {
+    "httpServers": [
+      {
+        "name": "http-default",
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 3000,
+        "path": "/",
+        "accessToken": "自动生成",
+        "messageFormat": "array",
+        "reportSelfMessage": false
+      }
+    ],
+    "httpClients": [],
+    "wsServers": [
+      {
+        "name": "ws-default",
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 3001,
+        "path": "/",
+        "role": "Universal",
+        "accessToken": "自动生成",
+        "messageFormat": "array",
+        "reportSelfMessage": false
+      }
+    ],
+    "wsClients": []
+  },
+  "musicSignUrl": ""
+}
+```
+
+<Callout type="info">
+  **从旧格式迁移**：早期版本把 `httpServers` / `wsServers` 等数组直接放在顶层，`httpPostEndpoints` 用于上报。当 SnowLuma 检测到这种结构时会自动迁移到新的 `networks` 对象并把 `httpPostEndpoints` 改名为 `httpClients`，回写到磁盘。手动维护配置请直接用新格式。
+</Callout>
+
+### 通用字段 [#通用字段]
+
+所有适配器都共享下列字段（`NetworkBase`）：
+
+| 字段                  | 类型     | 默认值     | 说明                                                 |
+| ------------------- | ------ | ------- | -------------------------------------------------- |
+| `name`              | string | 必填      | 同类型数组内唯一的标识，热重载按 `(kind, name)` 寻址。                |
+| `enabled`           | bool   | `true`  | 设为 `false` 可保留配置但不启动该适配器。                          |
+| `accessToken`       | string | 自动生成    | 鉴权令牌；OneBot Bearer / `?access_token=`。             |
+| `messageFormat`     | string | `array` | `array` 或 `string`，决定事件中 `message` 字段是段数组还是字符串。    |
+| `reportSelfMessage` | bool   | `false` | 为 `true` 时该适配器会收到 `post_type='message_sent'` 自身消息。 |
+
+### `httpServers` [#httpservers]
+
+启动 OneBot HTTP API 服务。
+
+| 字段     | 类型     | 默认值       | 说明        |
+| ------ | ------ | --------- | --------- |
+| `host` | string | `0.0.0.0` | 监听地址。     |
+| `port` | number | `3000`    | 监听端口。     |
+| `path` | string | `/`       | API 路径前缀。 |
+
+### `httpClients` [#httpclients]
+
+主动把事件 POST 到外部端点（旧名 `httpPostEndpoints`）。
+
+| 字段          | 类型     | 默认值    | 说明    |
+| ----------- | ------ | ------ | ----- |
+| `url`       | string | 必填     | 上报地址。 |
+| `timeoutMs` | number | `5000` | 请求超时。 |
+
+### `wsServers` [#wsservers]
+
+启动 OneBot WebSocket 服务。
+
+| 字段     | 类型     | 默认值         | 说明                                               |
+| ------ | ------ | ----------- | ------------------------------------------------ |
+| `host` | string | `0.0.0.0`   | 监听地址。                                            |
+| `port` | number | `3001`      | 监听端口。                                            |
+| `path` | string | `/`         | WebSocket 路径。                                    |
+| `role` | string | `Universal` | `Api`、`Event` 或 `Universal`（**大写驼峰**，旧的小写写法已废弃）。 |
+
+### `wsClients` [#wsclients]
+
+主动连接反向 WebSocket 服务。
+
+| 字段                    | 类型     | 默认值         | 说明                    |
+| --------------------- | ------ | ----------- | --------------------- |
+| `url`                 | string | 必填          | 反向 WebSocket 地址。      |
+| `role`                | string | `Universal` | 同 `wsServers.role`。   |
+| `reconnectIntervalMs` | number | `5000`      | 重连间隔，最小会被规范化为 `1000`。 |
+
+### `musicSignUrl` [#musicsignurl]
+
+可选；自定义音乐卡片签名服务地址。空字符串表示禁用。
+
+## 运行时配置（`runtime.json`） [#运行时配置runtimejson]
+
+`config/runtime.json` 记录 SnowLuma 进程级设置，**不分账号**。文件缺失或字段不全时，加载会自动补齐并回写。
+
+```json
+{
+  "webuiPort": 5099,
+  "webuiHost": "127.0.0.1",
+  "hookAutoLoad": false,
+  "webuiTls": { "enabled": false },
+  "trustProxy": "",
+  "logMaxTotalMb": 1024,
+  "logRetainDays": 7,
+  "logPerUin": false
+}
+```
+
+| 字段                 | 类型     | 默认值         | 说明                                                            |
+| ------------------ | ------ | ----------- | ------------------------------------------------------------- |
+| `webuiPort`        | number | `5099`      | WebUI 监听端口；非 `1..65535` 的整数会被回退到默认值。                          |
+| `webuiHost`        | string | `127.0.0.1` | WebUI 绑定地址。**默认只监听本机**，要从别的机器访问必须改成 `0.0.0.0`。属于监听器设置，改动需重启。  |
+| `hookAutoLoad`     | bool   | `false`     | 是否自动把 Hook 注入到新发现的 QQ 进程。Docker 镜像通过 `supervisord.conf` 打开。   |
+| `webuiTls.enabled` | bool   | `false`     | 用 `config/cert.pem` + `config/key.pem` 起 HTTPS。属于监听器设置，改动需重启。 |
+| `trustProxy`       | string | `""`        | 信任的反向代理来源，决定 WebUI 如何解析客户端 IP；空串表示谁都不信。                       |
+| `logMaxTotalMb`    | number | `1024`      | 日志根目录下所有文件的合计容量上限。                                            |
+| `logRetainDays`    | number | `7`         | 按自然日保留天数；`0` 关闭按日期清理。                                         |
+| `logPerUin`        | bool   | `false`     | 除共享日志外，再把带 UIN 的日志行复制到 `logs/<uin>/`。                         |
+
+<Callout type="warn">
+  **`webuiHost` 默认是 `127.0.0.1`**，只监听本机。Docker 用户请用 `SNOWLUMA_WEBUI_HOST=0.0.0.0` 覆盖（镜像的端口映射需要它才能从宿主机访问）。
+</Callout>
+
+## 环境变量 [#环境变量]
+
+环境变量**优先于** `runtime.json`，并且只作用于内存，不会被写回磁盘——适合 Docker 或启动器按次覆盖。
+
+| 变量                                                 | 对应字段               | 说明                                        |
+| -------------------------------------------------- | ------------------ | ----------------------------------------- |
+| `SNOWLUMA_WEBUI_PORT`                              | `webuiPort`        | WebUI 监听端口。                               |
+| `SNOWLUMA_WEBUI_HOST`                              | `webuiHost`        | WebUI 绑定地址；Docker 里设 `0.0.0.0`。           |
+| `SNOWLUMA_WEBUI_TLS`                               | `webuiTls.enabled` | `1` / `true` 起 HTTPS，`0` / `false` 关闭。    |
+| `SNOWLUMA_WEBUI_TRUST_PROXY`                       | `trustProxy`       | 信任的反向代理来源；写 `0` / `off` 表示谁都不信。           |
+| `SNOWLUMA_LOG_MAX_TOTAL_MB`                        | `logMaxTotalMb`    | 日志容量上限。                                   |
+| `SNOWLUMA_LOG_RETAIN_DAYS`                         | `logRetainDays`    | 日志保留天数。                                   |
+| `SNOWLUMA_LOG_PER_UIN`                             | `logPerUin`        | 是否按 UIN 分目录。                              |
+| `SNOWLUMA_HOOK_AUTOLOAD`                           | `hookAutoLoad`     | `1` / `true` 强制开启自动注入；`0` / `false` 关闭。   |
+| `SNOWLUMA_LOG_LEVEL`                               | —                  | 日志级别：`error` / `warn` / `info` / `debug`。 |
+| `SNOWLUMA_VERBOSE_WARMUP`                          | —                  | 设为 `1` 输出更详细的好友、群、群成员预热日志。                |
+| `SNOWLUMA_DEV_MODE`                                | —                  | 设为 `1` 启用开发模式（WebUI 鉴权放宽，仅本地调试用）。         |
+| `SNOWLUMA_DEV_WEBUI`                               | —                  | 设为 `1` 在 dev mode 下强制启用内置 WebUI。          |
+| `SNOWLUMA_ACCEPT_EULA` / `SNOWLUMA_ACCEPT_PRIVACY` | —                  | 都设为 `1` 时跳过首次启动的协议确认页面，供无人值守部署使用。         |
+
+## 端口冲突 [#端口冲突]
+
+`3000` / `3001` / `5099` 被占用时，修改对应配置文件的 `port` / `webuiPort` 后重启 SnowLuma。Docker 用户也可以直接把宿主机端口映射到不同端口（见 [Docker 部署](/docs/docker)）。
+
+
+# 开发者文档 (/zh/docs/developer)
+
+
+
+SnowLuma 是 TypeScript + 原生模块混合项目。TypeScript 负责运行时编排、OneBot 实现、协议桥接、SDK 和 WebUI；原生模块负责 Hook、注入和高性能 WebSocket 能力。
+
+## 环境要求 [#环境要求]
+
+| 项       | 要求                       | 依据                                        |
+| ------- | ------------------------ | ----------------------------------------- |
+| Node.js | `^24.22.1` 或 `>=26.12.1` | `package.json` 的 `engines`；低于此版本的安全基线不受支持 |
+| pnpm    | `11.25.0`（固定版本）          | `packageManager` 字段                       |
+| QQ      | NTQQ 有界面客户端              | Hook 需要可见窗口                               |
+
+`.node-version` 固定为 `24.22.1`，CI 与发行包都按它构建。只改 `.node-version` 不会升级已有安装的运行时。
+
+## Monorepo 结构 [#monorepo-结构]
+
+pnpm workspace，14 个包：
+
+```text
+SnowLuma/
+├─ packages/
+│  ├─ core/        @snowluma/core       应用入口、Bridge 编排、WebUI 后端、发行装配
+│  ├─ bridge/      @snowluma/bridge     QQ 进程发现、登录识别、Hook 会话
+│  ├─ protocol/    @snowluma/protocol   封包解码、类型化 QQ 事件、身份解析
+│  ├─ onebot/      @snowluma/onebot     动作校验与分发、事件转换、HTTP / WS 适配器
+│  ├─ common/      @snowluma/common     日志、配置、版本与通用工具
+│  ├─ sqlite/      @snowluma/sqlite     异步 SQLite 门面、原生加载、预编译选择
+│  ├─ proto-defs/  @snowluma/proto-defs 类型化协议 schema
+│  ├─ proton/      @snowluma/proton     编译期 protobuf 编解码与构建集成
+│  ├─ websocket/   @snowluma/websocket  本仓 WebSocket 实现（原生加速）
+│  ├─ runtime/     @snowluma/runtime    发行清单、启动器、随附原生件
+│  ├─ webui/       webui                React + Vite 控制台
+│  ├─ ui/          @snowluma/ui         对外发布的 UI 组件包
+│  ├─ sdk/         @snowluma/sdk        第三方 TypeScript OneBot 客户端
+│  └─ mcp/         @snowluma/mcp        MCP server 与生成的 action 目录
+├─ docker/         容器构建材料（Dockerfile / start.sh / supervisord / compose）
+├─ tools/          辅助脚本（版本 bump、release、发行布局校验）
+├─ compat/         兼容层
+├─ assets/         README 与文档用图
+└─ package.json
+```
+
+原生件放在 `packages/runtime/native/`，由构建拷贝到 `dist/native/`。
+
+## 核心启动链路 [#核心启动链路]
+
+入口在 [`packages/core/src/index.ts`](https://github.com/Roozenlz/SnowLuma/blob/main/packages/core/src/index.ts)：
+
+```text
+loadRuntimeConfig()           ← 读 config/runtime.json / env
+  ↓
+applyPendingUpdate()          ← 启动前先落地已暂存的更新
+  ↓
+HookManager(autoLoadOnDiscovery)
+  ↓
+BridgeManager
+  ↓
+OneBotManager                 ← 按 UIN 拉起 OneBotInstance
+  ↓
+initWebUI(port=webuiPort)     ← 仅完整构建启用
+```
+
+启动时创建：
+
+* **`HookManager`** —— 发现 QQ 主进程并注入 native addon；`hookAutoLoad: true` 时每发现一个新 PID 自动注入。
+* **`BridgeManager`** —— 把命名管道里的 Hook 消息解码成桥接事件；缓存 rkey / 联系人 / 群成员。
+* **`OneBotManager`** —— 按 UIN 创建 `OneBotInstance`；持有 `MessageStore` / `MediaStore` / `NetworkManager`。
+* **`initWebUI`** —— 完整构建中启动 WebUI，端口默认 `5099`（`runtime.json.webuiPort` 可改）。
+
+Core 保持单一 bundle，原生库惰性加载，这样启动时能先完成被中断更新的恢复，再打开原生文件。
+
+## Hook 与原生模块 [#hook-与原生模块]
+
+Hook 原生模块通过 `process.dlopen()` 加载，源码在独立的 [`SnowLuma/nnphook`](https://github.com/SnowLuma/nnphook) 仓库。
+
+平台命名约定：
+
+```text
+snowluma-win32-x64.node    snowluma-win32-x64.dll
+snowluma-linux-x64.node    snowluma-linux-x64.so
+snowluma-linux-arm64.node  snowluma-linux-arm64.so
+```
+
+WebSocket 原生件同规则：`websocket-<platform>-<arch>.node`。
+
+加载搜索路径：
+
+```text
+native/
+dist/native/
+packages/runtime/native/
+```
+
+原生 addon 暴露：
+
+* **`getAllMainProcess`** —— 枚举 QQ 主进程。
+* **`loadModuleManual`** —— 向目标进程手动映射注入模块。
+* **`unloadModuleManual`** —— 卸载已注入模块。
+
+Windows 默认目标进程名 `QQ.exe`；Linux 是 `qq`。接口已全面异步化，应用与原生产物必须成套更新。
+
+## OneBot 生命周期 [#onebot-生命周期]
+
+桥接层检测到 QQ 会话启动时：
+
+1. 加载 `config/onebot_<uin>.json`（缺则从全局复制）。
+2. 构造 `OneBotInstance`。
+3. 起 HTTP / WS / 反向 WS / HTTP POST 适配器（按 `networks.*` 配置）。
+4. 异步预热好友列表、群列表、群成员列表。
+5. 桥接事件 → OneBot 事件转发。
+
+会话关闭时对应实例释放。
+
+## WebSocket 包 [#websocket-包]
+
+`@snowluma/websocket` 是项目自带的 WebSocket 实现，接口尽量贴近 `ws`，但带原生加速。
+
+导出：
+
+* **`WebSocket`** —— 客户端构造器。
+* **`WebSocketServer`** —— 服务端构造器。
+* **`Server`** —— `WebSocketServer` 别名。
+* **`InternalWebSocket`** —— 内部连接实现。
+
+依赖平台原生 `.node`，同样从 `native/` 搜索路径加载。
+
+## SDK 与 MCP [#sdk-与-mcp]
+
+`@snowluma/sdk` 是面向第三方的 OneBot 客户端，类型完备：
+
+* HTTP / WebSocket / 反向 WS 三种传输。
+* 自动重连、事件订阅、ack 关联。
+* 与 SnowLuma 核心共享 action 类型，避免漂移。
+
+`@snowluma/mcp` 把 action 目录暴露成 MCP 工具，供 agent 调用。两者都可独立发布到 npm，不依赖 SnowLuma 运行时。
+
+## 开发命令 [#开发命令]
+
+```bash
+pnpm install --frozen-lockfile   # 锁文件不匹配时先解决依赖变更，不要随手重写
+pnpm dev              # core 开发模式
+pnpm dev:web          # WebUI 开发服务器
+pnpm build            # 仅 core
+pnpm build:webui      # 仅 WebUI
+pnpm build:sdk        # 仅 SDK
+pnpm build:mcp        # 仅 MCP
+pnpm build:all        # core + SDK + MCP + UI + WebUI
+pnpm test             # workflow 策略检查 + 全 workspace 测试
+pnpm test:workflows   # 仅 workflow 策略测试，不写 GitHub
+pnpm test:native      # 原生冒烟测试（需要匹配的原生件）
+pnpm typecheck        # 全仓类型检查
+pnpm lint             # 全仓 lint
+pnpm ci               # 本地复现 CI 的全部命令
+```
+
+## 构建顺序 [#构建顺序]
+
+完整发行版：
+
+```bash
+pnpm build:all
+```
+
+依次执行：
+
+1. `@snowluma/core` 完整构建（`BUILD_WEBUI=true`）
+2. `@snowluma/sdk`
+3. `@snowluma/mcp`
+4. `webui`（`@snowluma/ui` 先于它构建）
+
+产物统一输出到 `dist/`，随后用 `pnpm check:release-layout` 校验清单与原生件完整性。
+
+## 版本与发布 [#版本与发布]
+
+版本号统一来自根 `package.json`，各包通过 `@snowluma/common/version` 读取。
+
+```bash
+pnpm bump 2.4.3        # 同步根与所有 workspace 包的 version
+pnpm release 2.4.3     # 完整发布：CI → bump → dev → Promote → main → tag
+pnpm release 2.4.3 --dry-run   # 只打印计划
+```
+
+`pnpm release` 依赖 `dev` 分支上的 `chore(release): vX.Y.Z` 提交触发 Promote 工作流；发布链路的中途失败可用同一个命令重跑续做，不要 amend 发布提交。
+
+只维护自己的 fork、不跑 Promote 时，手动同步版本号并打 tag 即可：
+
+```bash
+# 改完全部 package.json 的 version 后
+git commit -am "chore(release): v2.4.3"
+git tag -a v2.4.3 -m "v2.4.3"
+git push origin main v2.4.3
+```
+
+tag 触发 `release.yml`：三平台构建 → 发布 GitHub Release → 构建并推送 Docker 镜像。
+
+## CI 工作流 [#ci-工作流]
+
+| 工作流                           | 触发        | 作用                          |
+| ----------------------------- | --------- | --------------------------- |
+| `ci.yml`                      | PR / push | test、typecheck、build、lint   |
+| `dev-build.yml`               | 任意分支 push | 三平台构建；`dev` 分支额外发布 `dev` 镜像 |
+| `release.yml`                 | `v*` tag  | 发版 + 推送 Docker 镜像           |
+| `docker-image.yml`            | 被上面两者调用   | 可复用的镜像构建实现                  |
+| `dispatch-docker-release.yml` | 手动        | 重建历史版本的镜像，不用重打 tag          |
+
+镜像构建需要的仓库配置：
+
+| 类型       | 名称                   | 说明                          |
+| -------- | -------------------- | --------------------------- |
+| Secret   | `DOCKERHUB_USERNAME` | Docker Hub 账号               |
+| Secret   | `DOCKERHUB_TOKEN`    | Access Token（Read & Write）  |
+| Variable | `DOCKER_IMAGE`       | 镜像名，如 `roozen/snowluma`     |
+| Variable | `DOCKER_PLATFORMS`   | 如 `linux/amd64,linux/arm64` |
+
+## 文档站 [#文档站]
+
+本站在独立仓库 [`Roozenlz/SnowLumaDocs`](https://github.com/Roozenlz/SnowLumaDocs)。
+
+技术栈：Next.js 16 + Fumadocs + Tailwind 4 + MDX。推 `main` 即由 `.github/workflows/deploy.yml` 静态导出到 `gh-pages`。
+
+OneBot API 参考由文档仓的 `tools/generate-onebot-openapi.mjs` 从主仓的 action 定义静态扫描产生，落到 `content/api/openapi.json`。Action 增删后重新生成并提交。
+
+## 贡献注意事项 [#贡献注意事项]
+
+* **不要绕过 BridgeManager**：OneBot 层一律通过 `BridgeInterface` 调用 NTQQ 能力，便于解耦和测试。
+* **保持配置可自动生成**：新增字段需向后兼容；解析时归一化、写回磁盘。
+* **原生模块按平台分发**：新加平台时同步 `.node` 与可注入库。
+* **优先补测试**：核心 OneBot 行为通过 `vitest` 验证，参考各包的 `tests/`。
+* **改 action 要重生成目录**：改完后跑 `pnpm --filter @snowluma/mcp gen`，并把生成的 `catalog.ts` / `catalog.json` 一并提交；CI 的 `tools/check-action-catalog.mjs` 会拒绝漂移。
+* **格式化**：TypeScript 走四空格缩进与 `pnpm format`，不要在业务代码里手调风格。
+
+
+# Docker 部署 (/zh/docs/docker)
+
+
+
+SnowLuma 在 Linux 上**只通过 Docker 运行**。镜像内置 Linux QQ + Xvfb + VNC + noVNC + supervisord，开箱即用；宿主机只需要 Docker。
+
+镜像的构建材料（`Dockerfile`、`start.sh`、`supervisord.conf`、`docker-compose.yml`）就在主仓的 [`docker/`](https://github.com/Roozenlz/SnowLuma/tree/main/docker) 目录里，构建与发布由主仓自己的 GitHub Actions 完成，不依赖任何外部仓库。
+
+## 镜像信息 [#镜像信息]
+
+| 项  | 值                                                       |
+| -- | ------------------------------------------------------- |
+| 镜像 | `roozen/snowluma:latest`（或具体 tag，如 `:v2.4.3`）           |
+| 架构 | `linux/amd64`、`linux/arm64`                             |
+| 基础 | `node:22-bookworm-slim`                                 |
+| 内置 | Linux QQ、Xvfb、VNC、noVNC、supervisord、SnowLuma `lite` 发行包 |
+
+镜像不在容器内重新编译 SnowLuma —— 它消费主仓 GitHub Release 的预编译 `lite` tarball，所以发版与镜像构建解耦。
+
+### 标签策略 [#标签策略]
+
+| 标签          | 由谁发布            | 说明                                   |
+| ----------- | --------------- | ------------------------------------ |
+| `latest`    | `release.yml`   | 只随**稳定版**（tag 不含 `-`）移动，始终指向最新的正式版本。 |
+| `v2.4.3`    | `release.yml`   | 每个 tag 一个，与 GitHub Release 一一对应。     |
+| `dev`       | `dev-build.yml` | `dev` 分支每次推送滚动更新，只构建 `linux/amd64`。  |
+| `dev-<sha>` | `dev-build.yml` | 同一份构建的不可变快照，便于回滚定位。                  |
+
+`dev` 镜像只用于联调，不要用在生产环境。
+
+## 端口 [#端口]
+
+| 端口     | 用途                     |
+| ------ | ---------------------- |
+| `5900` | VNC（远程桌面，密码登录 QQ 用）    |
+| `6081` | noVNC（浏览器版 VNC，无客户端访问） |
+| `5099` | SnowLuma WebUI         |
+| `3000` | OneBot HTTP（默认）        |
+| `3001` | OneBot WebSocket（默认）   |
+
+## 宿主机准备：放开 ptrace 限制 [#宿主机准备放开-ptrace-限制]
+
+<Callout type="warn">
+  **这一步必须先做，否则容器起来后 hook 注入会失败。**
+</Callout>
+
+SnowLuma 的 native addon 通过 `ptrace` 把 hook 注入到容器内的 QQ 进程。现代 Linux 发行版（Ubuntu / Debian / Arch 等）默认把 `kernel.yama.ptrace_scope` 设为 `1` 或更高，**即使容器启动加了 `--cap-add=SYS_PTRACE`，注入也会被宿主内核拦掉**。
+
+在宿主机上**只需要执行一次**：
+
+```bash
+echo 'kernel.yama.ptrace_scope=0' | sudo tee /etc/sysctl.d/99-snowluma-ptrace.conf
+sudo sysctl --system
+```
+
+验证是否生效：
+
+```bash
+sysctl kernel.yama.ptrace_scope
+# 期望输出：kernel.yama.ptrace_scope = 0
+```
+
+写到 `/etc/sysctl.d/99-snowluma-ptrace.conf` 是为了让设置在重启后自动恢复。如果你的环境对宿主机安全有更严格要求（比如多租户、面向公网），请考虑使用受信任的隔离机制（独立物理机 / VM）替代这一步。
+
+## 一行 docker run [#一行-docker-run]
+
+```bash
+docker run -d \
+  --name snowluma \
+  --restart unless-stopped \
+  --shm-size=1g \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  -e VNC_PASSWD=vncpasswd \
+  -p 5900:5900 \
+  -p 6081:6081 \
+  -p 5099:5099 \
+  -p 3000:3000 \
+  -p 3001:3001 \
+  -v snowluma-data:/app/snowluma-data \
+  -v snowluma-qq-config:/app/.config \
+  -v snowluma-qq-data:/app/.local/share \
+  roozen/snowluma:latest
+```
+
+<Callout type="warn">
+  `--cap-add=SYS_PTRACE` 和 `--security-opt seccomp=unconfined` **不能省**。SnowLuma 的 native addon 通过 ptrace 把 hook 注入 QQ 进程，默认 seccomp profile 会拦截。
+</Callout>
+
+`--shm-size=1g` 是 QQ（基于 Chromium）的运行要求，容器默认 `/dev/shm` 太小会崩。
+
+## docker-compose [#docker-compose]
+
+更推荐用 Compose。主仓 [`docker/docker-compose.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/docker/docker-compose.yml) 已经写好，直接拉下来用即可。
+
+```yaml
+services:
+  snowluma:
+    image: ${SNOWLUMA_IMAGE:-roozen/snowluma:latest}
+    container_name: ${SNOWLUMA_CONTAINER:-snowluma}
+    restart: unless-stopped
+    shm_size: 1gb
+    # 每个 QQ 实例都是完整的 Chromium 进程，多开时默认的 1024 个 fd 不够用。
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 1048576
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      VNC_PASSWD: ${VNC_PASSWD:-vncpasswd}
+      SNOWLUMA_UID: ${SNOWLUMA_UID:-1000}
+      SNOWLUMA_GID: ${SNOWLUMA_GID:-1000}
+      SNOWLUMA_WEBUI_HOST: ${SNOWLUMA_WEBUI_HOST:-0.0.0.0}
+      SNOWLUMA_WEBUI_PORT: ${SNOWLUMA_WEBUI_PORT:-5099}
+      SNOWLUMA_LOG_LEVEL: ${SNOWLUMA_LOG_LEVEL:-info}
+      SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x24}
+      SNOWLUMA_HOOK_AUTOLOAD: ${SNOWLUMA_HOOK_AUTOLOAD:-1}
+      SNOWLUMA_QQ_FLAGS: "${SNOWLUMA_QQ_FLAGS:-}"
+      SNOWLUMA_EXTRA_QQ_HOMES: "${SNOWLUMA_EXTRA_QQ_HOMES:-}"
+    ports:
+      # noVNC / WebUI / VNC 默认只绑回环；需要外部访问时改 SNOWLUMA_BIND_IP。
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${VNC_PORT:-5900}:5900"
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${NOVNC_PORT:-6081}:6081"
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${SNOWLUMA_WEBUI_HOST_PORT:-5099}:${SNOWLUMA_WEBUI_PORT:-5099}"
+      # OneBot 供其他容器或机器人连接，保留全网卡。
+      - "${ONEBOT_HTTP_PORT:-3000}:3000"
+      - "${ONEBOT_WS_PORT:-3001}:3001"
+    volumes:
+      - snowluma-data:/app/snowluma-data
+      - snowluma-qq-config:/app/.config
+      - snowluma-qq-data:/app/.local/share
+
+volumes:
+  snowluma-data:
+  snowluma-qq-config:
+  snowluma-qq-data:
+```
+
+`ulimits.nofile` 是给多开准备的：单账号跑不出问题，但每个 QQ 都是完整的 Chromium 进程，三四个号一起跑就会撞到默认的 1024 个文件描述符上限，日志里表现为 `EMFILE: too many open files`。
+
+`ports` 里 noVNC / WebUI / VNC 默认只绑 `127.0.0.1`，公网上扫不到。要从别的机器访问有两种办法：
+
+```bash
+# 1. 临时放开到所有网卡（注意先改掉 VNC_PASSWD）
+SNOWLUMA_BIND_IP=0.0.0.0 docker compose -f docker/docker-compose.yml up -d
+
+# 2. 推荐：保持回环，走 SSH 隧道
+ssh -L 5099:127.0.0.1:5099 -L 6081:127.0.0.1:6081 user@server
+# 然后本地打开 http://localhost:5099 和 http://localhost:6081
+```
+
+启动（在仓库根目录执行）：
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+升级镜像：
+
+```bash
+docker compose -f docker/docker-compose.yml pull
+docker compose -f docker/docker-compose.yml up -d
+```
+
+只想跟着某个具体版本走的，在 `.env` 里固定：
+
+```bash
+SNOWLUMA_IMAGE=roozen/snowluma:v2.4.3
+```
+
+## 环境变量 [#环境变量]
+
+| 变量                        | 默认             | 说明                                                                              |
+| ------------------------- | -------------- | ------------------------------------------------------------------------------- |
+| `VNC_PASSWD`              | `vncpasswd`    | VNC / noVNC 登录密码。**改成自己的**，不然别人也能进容器里看你 QQ。                                     |
+| `SNOWLUMA_UID`            | `1000`         | 容器内 `snowluma` 用户的 uid。和你挂载卷的宿主属主匹配。                                            |
+| `SNOWLUMA_GID`            | `1000`         | 容器内 `snowluma` 用户的 gid。                                                         |
+| `SNOWLUMA_WEBUI_HOST`     | `0.0.0.0`      | WebUI 绑定地址。程序本身默认只监听 `127.0.0.1`，镜像通过这个变量放开，否则端口映射进不来。                          |
+| `SNOWLUMA_WEBUI_PORT`     | `5099`         | WebUI 监听端口（容器内）。                                                                |
+| `SNOWLUMA_LOG_LEVEL`      | `info`         | `error` / `warn` / `info` / `debug`。                                            |
+| `SNOWLUMA_SCREEN`         | `1920x1080x24` | Xvfb 分辨率 + 色深。                                                                  |
+| `SNOWLUMA_HOOK_AUTOLOAD`  | `1`            | 镜像默认开自动注入。设 `0` 切回手动 Load 流程。                                                   |
+| `SNOWLUMA_QQ_FLAGS`       | 空              | 追加给 QQ 的启动参数，空格分隔。无 GPU 环境可设 `--disable-gpu --disable-software-rasterizer` 省内存。 |
+| `SNOWLUMA_EXTRA_QQ_HOMES` | 空              | 额外的 QQ 账号 `HOME` 目录，逗号或空格分隔；每个目录由 supervisord 单独托管。见[多开 QQ](#多开-qq多账号)。         |
+
+环境变量优先级高于 `runtime.json`，所以 Docker 用环境变量覆盖最方便。
+
+## 数据卷 [#数据卷]
+
+| 卷                    | 容器路径                 | 内容                                                                      |
+| -------------------- | -------------------- | ----------------------------------------------------------------------- |
+| `snowluma-data`      | `/app/snowluma-data` | SnowLuma 配置、缓存、SDB 等。`config/onebot.json` 和 `config/runtime.json` 都在这里。 |
+| `snowluma-qq-config` | `/app/.config`       | QQ 客户端配置。                                                               |
+| `snowluma-qq-data`   | `/app/.local/share`  | QQ 用户数据（登录态、缓存等）。                                                       |
+
+**升级镜像不要删这三个卷**，否则会丢登录态和配置。
+
+## 首次登录 [#首次登录]
+
+1. 启动容器后用浏览器打开 `http://<IP>:6081/`（noVNC），输入 `VNC_PASSWD`。
+2. 在远程桌面里能看到 QQ 已自动起来，扫码登录。
+3. 登录完成后 hook 会自动从被动观察切到工作模式，无需在 WebUI 里手动 Load。
+4. 浏览器打开 `http://<IP>:5099/` 访问 SnowLuma WebUI。
+
+### 找 WebUI 临时密码 [#找-webui-临时密码]
+
+首次启动会在日志里输出一次性密码：
+
+```bash
+docker logs snowluma 2>&1 | grep -E "临时密码|initial credentials" | tail -n 1
+```
+
+只要密码字符串：
+
+```bash
+docker logs snowluma 2>&1 | \
+  sed -nE 's/.*(临时密码: |initial credentials: user=admin password=)([^[:space:]]+).*/\2/p' | tail -n 1
+```
+
+<Callout type="info">
+  临时密码**只在全新数据卷首次启动时**输出一次。复用旧卷 / 重启都不会重新生成。
+</Callout>
+
+## 多开 QQ（多账号） [#多开-qq多账号]
+
+Linux QQ 自带单实例锁：在已有 QQ 跑着的桌面里直接再点一次 QQ 图标，只会把已有窗口聚焦，**起不来第二个进程**。锁文件落在 `$HOME/.config/QQ/SingletonLock`，所以每个实例必须有自己的 `HOME`。
+
+SnowLuma 一侧不需要任何额外配置：[HookManager](https://github.com/Roozenlz/SnowLuma/blob/main/packages/bridge/src/hook-manager.ts) 会遍历所有 QQ 主进程，新启动一个就自动注入一个，每个 UIN 拉一个独立 `OneBotInstance`，配置存到对应的 `config/onebot_<uin>.json`。
+
+### 用 `SNOWLUMA_EXTRA_QQ_HOMES` 声明（推荐） [#用-snowluma_extra_qq_homes-声明推荐]
+
+把额外的 `HOME` 目录写进变量即可，每个目录会由 supervisord 单独托管一个 QQ 进程——崩溃后**只重启那一个账号**，不会连累其他号：
+
+```yaml
+services:
+  snowluma:
+    environment:
+      SNOWLUMA_EXTRA_QQ_HOMES: /app/qq-acct2,/app/qq-acct3
+    volumes:
+      - snowluma-data:/app/snowluma-data
+      - snowluma-qq-config:/app/.config
+      - snowluma-qq-data:/app/.local/share
+      - snowluma-qq2:/app/qq-acct2     # 第二个账号的完整 HOME
+      - snowluma-qq3:/app/qq-acct3     # 第三个账号
+
+volumes:
+  snowluma-data:
+  snowluma-qq-config:
+  snowluma-qq-data:
+  snowluma-qq2:
+  snowluma-qq3:
+```
+
+路径用逗号或空格分隔。开头的 `/app`（主账号）会被自动跳过，重复路径和相对路径会被忽略并在日志里给出提示。目录不存在时会在启动阶段自动创建。
+
+启动后 `docker logs snowluma` 会打印类似：
+
+```text
+supervisord: 3 QQ program(s), no extra flags, config: /etc/supervisord.run.conf
+```
+
+每个账号对应一个 `[program:qq-<目录名>]`，可用 `supervisorctl status` 单独查看：
+
+```bash
+docker exec snowluma supervisorctl status
+# qq                       RUNNING
+# qq-qq-acct2              RUNNING
+# qq-qq-acct3              RUNNING
+# snowluma                 RUNNING
+```
+
+<Callout type="info">
+  **别忘了挂卷。** 只声明了 `SNOWLUMA_EXTRA_QQ_HOMES` 而没给对应目录挂卷时，账号能正常登录，但容器重建后登录态会丢。
+</Callout>
+
+### 手动在 noVNC 桌面里启（临时用） [#手动在-novnc-桌面里启临时用]
+
+只想临时开一个号、不写进 compose 时，在 noVNC 桌面终端里：
+
+```bash
+mkdir -p /app/qq-temp
+HOME=/app/qq-temp qq --no-sandbox &
+disown
+```
+
+`disown` 让 QQ 与终端解绑——关掉终端窗口 QQ 不会跟着退出。这种方式不会自动重启，容器重启后需要重来。
+
+### 限制 & 注意 [#限制--注意]
+
+* **每个 QQ 实例独占自己的 `HOME`** —— 别让两个 QQ 共用同一个 `HOME`，会冲突。
+* **资源**：每个 QQ 进程跑 Chromium 大概吃 300-500MB 内存，`--shm-size` 主账号 1GB 够用，多开建议加到 `2gb` 或更高。
+* **noVNC 同屏可见**：多个 QQ 窗口都在同一个 Xvfb 桌面里，VNC 进去可以分别操作。如果只想登一次就走，登完后把 QQ 窗口最小化即可，不会影响 hook。
+* **WebUI 自动列出所有 UIN**：SnowLuma 不需要单独配置就能识别新登录的账号，WebUI / `get_login_info` 都会出现新 UIN。
+
+## 自动注入 [#自动注入]
+
+镜像默认开 `SNOWLUMA_HOOK_AUTOLOAD=1`：容器一启动就把 hook 注入 QQ 主进程（被动观察），扫码登录完成后 hook 自动切到工作模式。supervisor 让 QQ 崩溃自动重启时也走同样流程。
+
+### 关闭自动注入 [#关闭自动注入]
+
+想保留传统的"WebUI 里手动 Load"流程：
+
+```bash
+docker run -e SNOWLUMA_HOOK_AUTOLOAD=0 ... roozen/snowluma:latest
+```
+
+或在 `docker-compose.yml` 改 `SNOWLUMA_HOOK_AUTOLOAD: 0`，或编辑持久卷里的 `/app/snowluma-data/config/runtime.json` 设 `"hookAutoLoad": false`。环境变量优先。
+
+## 常用运维 [#常用运维]
+
+进容器：
+
+```bash
+docker exec -it snowluma bash
+```
+
+查日志：
+
+```bash
+docker logs -f snowluma
+```
+
+只看 SnowLuma 主进程日志（过滤掉 QQ 自己的输出）：
+
+```bash
+docker logs -f snowluma 2>&1 | grep -v "QtNetwork\|GLib\|libQt6"
+```
+
+进入 SnowLuma 数据目录：
+
+```bash
+docker exec -it snowluma bash -c "cd /app/snowluma-data && ls -la"
+```
+
+修改 OneBot 配置：编辑 `/app/snowluma-data/config/onebot_<uin>.json`，重启容器：
+
+```bash
+docker restart snowluma
+```
+
+## 端口冲突 [#端口冲突]
+
+宿主机端口被占用时，调宿主侧映射即可，容器内端口不变。例：把 OneBot HTTP 改为宿主的 `8080`：
+
+```yaml
+ports:
+  - "8080:3000"   # 宿主 8080 → 容器 3000
+```
+
+或通过环境变量（Compose 模板已支持）：
+
+```bash
+ONEBOT_HTTP_PORT=8080 docker compose -f docker/docker-compose.yml up -d
+```
+
+## 自己构建镜像 [#自己构建镜像]
+
+构建上下文是主仓的 `docker/` 目录，Dockerfile 从上下文里读 `SnowLuma.Framework.tar.gz`。
+
+### 用已发布的 Release 构建 [#用已发布的-release-构建]
+
+```bash
+git clone --depth 1 https://github.com/Roozenlz/SnowLuma.git
+cd SnowLuma
+
+TAG=v2.4.3
+gh release download "$TAG" \
+  --pattern "SnowLuma-$TAG-linux-x64-lite.tar.gz" \
+  --output docker/SnowLuma.Framework.tar.gz --clobber
+
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag roozen/snowluma:$TAG docker --load
+```
+
+### 用本地构建的产物 [#用本地构建的产物]
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build:all
+
+tar -czf docker/SnowLuma.Framework.tar.gz -C dist .
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag snowluma:local docker --load
+```
+
+`dist/` 必须包含完整的运行时布局（`index.mjs`、`native/`、`webui/`、`package.json` 等），`pnpm build:all` 产出的即是。
+
+### 多架构 [#多架构]
+
+本地 `buildx build` 一次只能 `--load` 单个架构。需要 amd64 + arm64 合并 manifest 时走 CI：
+
+* **发版自动构建**：[`release.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/.github/workflows/release.yml) 在 Release 发布后调用同一套 `docker-image.yml`。
+* **重建历史版本**：手动跑 [Rebuild Docker Image](https://github.com/Roozenlz/SnowLuma/actions/workflows/dispatch-docker-release.yml)，填 `snowluma_tag` 即可，不用重新打 tag。
+
+### 镜像里的 QQ 版本 [#镜像里的-qq-版本]
+
+Dockerfile 从腾讯 CDN 下载 Linux QQ 的 `.deb`，版本由三个 build arg 固定：
+
+```dockerfile
+ARG QQ_VERSION=3.2.35-54395
+ARG QQ_CHANNEL=9.9.37/beta
+ARG QQ_HASH=816b3c79
+```
+
+腾讯每次发版都会换目录和内容哈希，旧值直接 404。构建日志出现 `Unable to download linuxqq_*.deb` 时，去 [AUR 的 linuxqq PKGBUILD](https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=linuxqq) 取新的三元组，覆盖后重试：
+
+```bash
+docker buildx build \
+  --build-arg QQ_VERSION=3.2.36-xxxxx \
+  --build-arg QQ_CHANNEL=9.9.38/beta \
+  --build-arg QQ_HASH=xxxxxxxx \
+  --file docker/Dockerfile --tag roozen/snowluma:test docker
+```
+
+## 安全提示 [#安全提示]
+
+
+# 介绍 (/zh/docs)
+
+
+
+SnowLuma 是一个高性能的下一代远程协议框架，旨在桥接 NTQQ 协议与 OneBot 生态系统，为机器人开发提供结构化的 API。
+
+## 你可以用它做什么 [#你可以用它做什么]
+
+* **接入 OneBot v11**：HTTP / WebSocket / 反向 WebSocket / HTTP 上报四种适配器。
+* **桥接 NTQQ**：通过 Hook 捕获并解析 NTQQ 数据包，再转换为上层事件 / 动作。
+* **多账号会话**：每个 UIN 一个独立 OneBot 实例，配置可继承全局或单独覆盖。
+* **内置 WebUI**：完整构建启动后可访问 Web 控制台查看状态、管理网络适配器、暂存并安装更新。
+* **TypeScript SDK / MCP**：`@snowluma/sdk` 提供类型完备的 OneBot 客户端，`@snowluma/mcp` 把同一套 action 暴露给 agent。
+
+## 运行环境 [#运行环境]
+
+| 项               | 要求                                                     |
+| --------------- | ------------------------------------------------------ |
+| Windows / macOS | 原生运行，需要自备 Node.js                                      |
+| Linux           | 只通过 [Docker 容器](/docs/docker) 运行（镜像内置 QQ + Xvfb + VNC） |
+| Node.js         | `^24.22.1` 或 `>=26.12.1`（完整发行包已内置）                     |
+| QQ              | NTQQ 有界面客户端                                            |
+
+## 两种用法 [#两种用法]
+
+| 场景       | 推荐方式                                                                                        |
+| -------- | ------------------------------------------------------------------------------------------- |
+| 部署到服务器   | [Docker 容器](/docs/docker) —— 镜像内置 QQ + Xvfb + VNC，开箱即用                                      |
+| 本机使用预发行版 | 从 [GitHub Releases](https://github.com/Roozenlz/SnowLuma/releases) 下载对应平台的 tarball，解压后运行启动器 |
+
+## 发行包命名 [#发行包命名]
+
+每个 tag 会发布三类产物，覆盖 Windows x64、Linux x64 与 Linux arm64：
+
+| 文件名                                 | 说明                                       |
+| ----------------------------------- | ---------------------------------------- |
+| `SnowLuma-<TAG>-win-x64.zip`        | Windows 完整版，内置 Node.js，解压即可运行            |
+| `SnowLuma-<TAG>-linux-x64.tar.gz`   | Linux x64 完整版                            |
+| `SnowLuma-<TAG>-linux-arm64.tar.gz` | Linux arm64 完整版                          |
+| `...-lite.zip` / `...-lite.tar.gz`  | 不含 Node.js，需要自备 `^24.22.1` 或 `>=26.12.1` |
+
+完整版适合直接解压运行；Lite 版体积小很多，适合容器或已装 Node 的机器。
+
+## 发行目录 [#发行目录]
+
+`pnpm build:all` 产物输出到仓库根目录 `dist/`：
+
+```text
+dist/
+├─ index.mjs            # 主入口
+├─ launcher.bat         # Windows 启动器
+├─ launcher.sh          # Linux 启动器
+├─ package.json
+├─ release.json         # 发行清单（版本、平台、文件列表）
+├─ webui/               # 内置 WebUI 静态资源
+└─ native/              # 平台原生产物
+   ├─ snowluma-<platform>-<arch>.node
+   ├─ snowluma-<platform>-<arch>.so / .dll
+   └─ websocket-<platform>-<arch>.node
+```
+
+解压后 Windows 跑 `launcher.bat`，Linux 跑 `./launcher.sh`。
+
+## 快速开始 [#快速开始]
+
+1. 解压与系统架构匹配的压缩包。
+2. 启动后浏览器访问 `http://localhost:5099`。
+3. 用启动日志里的初始账号登录 WebUI，按引导接入 QQ 进程并配置 OneBot 连接。
+
+无人值守部署可以同时设置 `SNOWLUMA_ACCEPT_EULA=1` 与 `SNOWLUMA_ACCEPT_PRIVACY=1` 完成协议确认；缺任意一项仍会显示同意页面。
+
+## 默认服务 [#默认服务]
+
+首次启动 OneBot 实例时，SnowLuma 会自动创建 `config/onebot.json`、`config/onebot_<uin>.json` 和 `config/runtime.json`。
+
+| 服务               | 默认地址                   | 配置项                           |
+| ---------------- | ---------------------- | ----------------------------- |
+| OneBot HTTP      | `http://0.0.0.0:3000/` | `networks.httpServers[].port` |
+| OneBot WebSocket | `ws://0.0.0.0:3001/`   | `networks.wsServers[].port`   |
+| WebUI            | `http://0.0.0.0:5099/` | `runtime.json` 的 `webuiPort`  |
+
+详细字段说明见 [配置参考](/docs/configuration)。
+
+## 使用边界 [#使用边界]
+
+SnowLuma 使用**源码可见非商业许可**，不是 OSI 开源许可。源码可用于查看、学习、非商业自托管及私下修改；商业使用，以及公开发布修改版或衍生版，均需事先取得书面授权。二进制发行包另受 EULA 与隐私政策约束。
+
+SnowLuma 是独立的第三方项目，与腾讯 / QQ 无隶属或授权关系。项目仅供学习与技术研究，请遵守 QQ 用户协议及适用法律；软件按「现状」提供，使用风险自负。
+
+
+# 点赞 · send_like (/zh/docs/extended/send_like)
+
+(see live page for OpenAPI specification)
+
+
+# 戳一戳（好友） · friend_poke (/zh/docs/extended/friend_poke)
+
+(see live page for OpenAPI specification)
+
+
+# 戳一戳（群） · group_poke (/zh/docs/extended/group_poke)
+
+(see live page for OpenAPI specification)
+
+
+# 戳一戳（统一接口） · send_poke (/zh/docs/extended/send_poke)
+
+(see live page for OpenAPI specification)
+
+
+# 设置精华消息 · set_essence_msg (/zh/docs/extended/set_essence_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 取消精华消息 · delete_essence_msg (/zh/docs/extended/delete_essence_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取精华消息列表 · get_essence_msg_list (/zh/docs/extended/get_essence_msg_list)
+
+(see live page for OpenAPI specification)
+
+
+# 群表情回应（别名） · set_group_reaction (/zh/docs/extended/set_group_reaction)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群消息历史 · get_group_msg_history (/zh/docs/extended/get_group_msg_history)
+
+(see live page for OpenAPI specification)
+
+
+# 获取好友消息历史 · get_friend_msg_history (/zh/docs/extended/get_friend_msg_history)
+
+(see live page for OpenAPI specification)
+
+
+# 标记群消息已读 · mark_group_msg_as_read (/zh/docs/extended/mark_group_msg_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 标记私聊已读 · mark_private_msg_as_read (/zh/docs/extended/mark_private_msg_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 标记消息已读 · mark_msg_as_read (/zh/docs/extended/mark_msg_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 RKey · get_rkey (/zh/docs/extended/get_rkey)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 RKey（NapCat 兼容） · nc_get_rkey (/zh/docs/extended/nc_get_rkey)
+
+(see live page for OpenAPI specification)
+
+
+# 发布群公告 · _send_group_notice (/zh/docs/extended/_send_group_notice)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群公告 · _get_group_notice (/zh/docs/extended/_get_group_notice)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群公告 · _del_group_notice (/zh/docs/extended/_del_group_notice)
+
+(see live page for OpenAPI specification)
+
+
+# 上传合并转发 · upload_forward_msg (/zh/docs/extended/upload_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送合并转发 · send_forward_msg (/zh/docs/extended/send_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送群合并转发 · send_group_forward_msg (/zh/docs/extended/send_group_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送私聊合并转发 · send_private_forward_msg (/zh/docs/extended/send_private_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取合并转发 · get_forward_msg (/zh/docs/extended/get_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取图片信息 · get_image (/zh/docs/extended/get_image)
+
+(see live page for OpenAPI specification)
+
+
+# 获取语音信息 · get_record (/zh/docs/extended/get_record)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 Cookies · get_cookies (/zh/docs/extended/get_cookies)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 CSRF Token · get_csrf_token (/zh/docs/extended/get_csrf_token)
+
+(see live page for OpenAPI specification)
+
+
+# 获取凭证 · get_credentials (/zh/docs/extended/get_credentials)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 清理缓存 · clean_cache (/zh/docs/extended/clean_cache)
+
+(see live page for OpenAPI specification)
+
+
+# 设置好友备注 · set_friend_remark (/zh/docs/extended/set_friend_remark)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群备注 · set_group_remark (/zh/docs/extended/set_group_remark)
+
+(see live page for OpenAPI specification)
+
+
+# 对消息回应表情 · set_msg_emoji_like (/zh/docs/extended/set_msg_emoji_like)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 标记全部已读 · _mark_all_as_read (/zh/docs/extended/_mark_all_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 群文件系统信息 · get_group_file_system_info (/zh/docs/extended/get_group_file_system_info)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] URL 安全检查 · check_url_safely (/zh/docs/extended/check_url_safely)
+
+(see live page for OpenAPI specification)
+
+
+# 下载文件 · download_file (/zh/docs/extended/download_file)
+
+(see live page for OpenAPI specification)
+
+
+# 设置 QQ 资料 · set_qq_profile (/zh/docs/extended/set_qq_profile)
+
+(see live page for OpenAPI specification)
+
+
+# 设置在线状态 · set_online_status (/zh/docs/extended/set_online_status)
+
+(see live page for OpenAPI specification)
+
+
+# 设置自定义在线状态 · set_diy_online_status (/zh/docs/extended/set_diy_online_status)
+
+(see live page for OpenAPI specification)
+
+
+# 获取忽略的入群通知 · get_group_ignored_notifies (/zh/docs/extended/get_group_ignored_notifies)
+
+(see live page for OpenAPI specification)
+
+
+# 获取被忽略的加群请求 · get_group_ignore_add_request (/zh/docs/extended/get_group_ignore_add_request)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取被禁言成员列表 · get_group_shut_list (/zh/docs/extended/get_group_shut_list)
+
+(see live page for OpenAPI specification)
+
+
+# 转发单条消息给好友 · forward_friend_single_msg (/zh/docs/extended/forward_friend_single_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 转发单条消息到群 · forward_group_single_msg (/zh/docs/extended/forward_group_single_msg)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取最近联系人 · get_recent_contact (/zh/docs/extended/get_recent_contact)
+
+(see live page for OpenAPI specification)
+
+
+# 获取点赞信息 · get_profile_like (/zh/docs/extended/get_profile_like)
+
+(see live page for OpenAPI specification)
+
+
+# 拉取自定义表情 · fetch_custom_face (/zh/docs/extended/fetch_custom_face)
+
+(see live page for OpenAPI specification)
+
+
+# 获取表情回应列表 · get_emoji_likes (/zh/docs/extended/get_emoji_likes)
+
+(see live page for OpenAPI specification)
+
+
+# 拉取表情回应（别名） · fetch_emoji_like (/zh/docs/extended/fetch_emoji_like)
+
+(see live page for OpenAPI specification)
+
+
+# 获取分组好友列表 · get_friends_with_category (/zh/docs/extended/get_friends_with_category)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取在线客户端 · get_online_clients (/zh/docs/extended/get_online_clients)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取机型展示 · _get_model_show (/zh/docs/extended/_get_model_show)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 设置机型展示 · _set_model_show (/zh/docs/extended/_set_model_show)
+
+(see live page for OpenAPI specification)
+
+
+# 查询 @全体剩余次数 · get_group_at_all_remain (/zh/docs/extended/get_group_at_all_remain)
+
+(see live page for OpenAPI specification)
+
+
+# 获取单向好友列表 · get_unidirectional_friend_list (/zh/docs/extended/get_unidirectional_friend_list)
+
+(see live page for OpenAPI specification)
+
+
+# 设置长签名 · set_self_longnick (/zh/docs/extended/set_self_longnick)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取收藏列表 · get_collection_list (/zh/docs/extended/get_collection_list)
+
+(see live page for OpenAPI specification)
+
+
+# 设置 QQ 头像 · set_qq_avatar (/zh/docs/extended/set_qq_avatar)
+
+(see live page for OpenAPI specification)
+
+
+# 设置输入中状态 · set_input_status (/zh/docs/extended/set_input_status)
+
+(see live page for OpenAPI specification)
+
+
+# 英译中 · translate_en2zh (/zh/docs/extended/translate_en2zh)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 ClientKey · get_clientkey (/zh/docs/extended/get_clientkey)
+
+(see live page for OpenAPI specification)
+
+
+# 构造小程序 Ark · get_mini_app_ark (/zh/docs/extended/get_mini_app_ark)
+
+(see live page for OpenAPI specification)
+
+
+# 点击内联键盘按钮 · click_inline_keyboard_button (/zh/docs/extended/click_inline_keyboard_button)
+
+(see live page for OpenAPI specification)
+
+
+# 群签到 · set_group_sign (/zh/docs/extended/set_group_sign)
+
+(see live page for OpenAPI specification)
+
+
+# 群签到（兼容别名） · send_group_sign (/zh/docs/extended/send_group_sign)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群信息（扩展） · get_group_info_ex (/zh/docs/extended/get_group_info_ex)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群详细信息 · get_group_detail_info (/zh/docs/extended/get_group_detail_info)
+
+(see live page for OpenAPI specification)
+
+
+# 发送原始数据包 · send_packet (/zh/docs/extended/send_packet)
+
+(see live page for OpenAPI specification)
+
+
+# 退出 Bot · bot_exit (/zh/docs/extended/bot_exit)
+
+(see live page for OpenAPI specification)
+
+
+# Packet 状态（NapCat 兼容） · nc_get_packet_status (/zh/docs/extended/nc_get_packet_status)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群文件夹（别名） · delete_group_folder (/zh/docs/extended/delete_group_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群待办 · set_group_todo (/zh/docs/extended/set_group_todo)
+
+(see live page for OpenAPI specification)
+
+
+# 完成群待办 · complete_group_todo (/zh/docs/extended/complete_group_todo)
+
+(see live page for OpenAPI specification)
+
+
+# 取消群待办 · cancel_group_todo (/zh/docs/extended/cancel_group_todo)
+
+(see live page for OpenAPI specification)
+
+
+# 用户在线状态 · nc_get_user_status (/zh/docs/extended/nc_get_user_status)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 AI 角色列表 · get_ai_characters (/zh/docs/extended/get_ai_characters)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 AI 语音 URL · get_ai_record (/zh/docs/extended/get_ai_record)
+
+(see live page for OpenAPI specification)
+
+
+# 发送 AI 群语音 · send_group_ai_record (/zh/docs/extended/send_group_ai_record)
+
+(see live page for OpenAPI specification)
+
+
+# 获取好友列表 · get_friend_list (/zh/docs/friend/get_friend_list)
+
+(see live page for OpenAPI specification)
+
+
+# 获取陌生人信息 · get_stranger_info (/zh/docs/friend/get_stranger_info)
+
+(see live page for OpenAPI specification)
+
+
+# 删除好友 · delete_friend (/zh/docs/friend/delete_friend)
+
+(see live page for OpenAPI specification)
+
+
+# 踢出群成员 · set_group_kick (/zh/docs/group-admin/set_group_kick)
+
+(see live page for OpenAPI specification)
+
+
+# 批量踢出群成员 · set_group_kick_members (/zh/docs/group-admin/set_group_kick_members)
+
+(see live page for OpenAPI specification)
+
+
+# 禁言群成员 · set_group_ban (/zh/docs/group-admin/set_group_ban)
+
+(see live page for OpenAPI specification)
+
+
+# 全员禁言 · set_group_whole_ban (/zh/docs/group-admin/set_group_whole_ban)
+
+(see live page for OpenAPI specification)
+
+
+# 设置加群方式 · set_group_add_option (/zh/docs/group-admin/set_group_add_option)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群搜索 · set_group_search (/zh/docs/group-admin/set_group_search)
+
+(see live page for OpenAPI specification)
+
+
+# 设置 / 取消管理员 · set_group_admin (/zh/docs/group-admin/set_group_admin)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群名片 · set_group_card (/zh/docs/group-admin/set_group_card)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群名 · set_group_name (/zh/docs/group-admin/set_group_name)
+
+(see live page for OpenAPI specification)
+
+
+# 退群 / 解散群 · set_group_leave (/zh/docs/group-admin/set_group_leave)
+
+(see live page for OpenAPI specification)
+
+
+# 设置专属头衔 · set_group_special_title (/zh/docs/group-admin/set_group_special_title)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 群匿名开关 · set_group_anonymous (/zh/docs/group-admin/set_group_anonymous)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 禁言匿名用户 · set_group_anonymous_ban (/zh/docs/group-admin/set_group_anonymous_ban)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群头像 · set_group_portrait (/zh/docs/group-admin/set_group_portrait)
+
+(see live page for OpenAPI specification)
+
+
+# 上传群文件 · upload_group_file (/zh/docs/group-file/upload_group_file)
+
+(see live page for OpenAPI specification)
+
+
+# 上传私聊文件 · upload_private_file (/zh/docs/group-file/upload_private_file)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群文件下载链接 · get_group_file_url (/zh/docs/group-file/get_group_file_url)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群根目录文件 · get_group_root_files (/zh/docs/group-file/get_group_root_files)
+
+(see live page for OpenAPI specification)
+
+
+# 获取指定文件夹文件 · get_group_files_by_folder (/zh/docs/group-file/get_group_files_by_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群文件 · delete_group_file (/zh/docs/group-file/delete_group_file)
+
+(see live page for OpenAPI specification)
+
+
+# 移动群文件 · move_group_file (/zh/docs/group-file/move_group_file)
+
+(see live page for OpenAPI specification)
+
+
+# 创建群文件夹 · create_group_file_folder (/zh/docs/group-file/create_group_file_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群文件夹 · delete_group_file_folder (/zh/docs/group-file/delete_group_file_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 重命名群文件夹 · rename_group_file_folder (/zh/docs/group-file/rename_group_file_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 获取私聊文件下载链接 · get_private_file_url (/zh/docs/group-file/get_private_file_url)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群列表 · get_group_list (/zh/docs/group-info/get_group_list)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群信息 · get_group_info (/zh/docs/group-info/get_group_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群成员列表 · get_group_member_list (/zh/docs/group-info/get_group_member_list)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群成员信息 · get_group_member_info (/zh/docs/group-info/get_group_member_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群荣誉信息 · get_group_honor_info (/zh/docs/group-info/get_group_honor_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取入群请求 · get_group_system_msg (/zh/docs/group-info/get_group_system_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取登录信息 · get_login_info (/zh/docs/system/get_login_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取运行状态 · get_status (/zh/docs/system/get_status)
+
+(see live page for OpenAPI specification)
+
+
+# 获取版本信息 · get_version_info (/zh/docs/system/get_version_info)
+
+(see live page for OpenAPI specification)
+
+
+# 是否可发图片 · can_send_image (/zh/docs/system/can_send_image)
+
+(see live page for OpenAPI specification)
+
+
+# 是否可发语音 · can_send_record (/zh/docs/system/can_send_record)
+
+(see live page for OpenAPI specification)
+
+
+# 发送消息 · send_msg (/zh/docs/message/send_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送私聊消息 · send_private_msg (/zh/docs/message/send_private_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送群消息 · send_group_msg (/zh/docs/message/send_group_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取消息 · get_msg (/zh/docs/message/get_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 撤回消息 · delete_msg (/zh/docs/message/delete_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 处理好友申请 · set_friend_add_request (/zh/docs/request/set_friend_add_request)
+
+(see live page for OpenAPI specification)
+
+
+# 处理加群请求 · set_group_add_request (/zh/docs/request/set_group_add_request)
+
+(see live page for OpenAPI specification)
+
+
+# Configuration (/en/docs/configuration)
+
+
+
+SnowLuma stores configuration in two JSON files:
+
+* **`config/onebot.json` + `config/onebot_<uin>.json`** — OneBot network adapters (HTTP/WebSocket listeners, reverse WS, HTTP event reporting).
+* **`config/runtime.json`** — process-level settings (WebUI port, auto-injection toggle).
+
+Both files are auto-generated on first run and normalized on every load.
+
+## OneBot config [#onebot-config]
+
+### File locations [#file-locations]
+
+```text
+config/onebot.json          # global defaults
+config/onebot_<uin>.json    # per-account overrides
+```
+
+* **Global**: `config/onebot.json` — the default for every account.
+* **Per-account**: `config/onebot_<uin>.json` — overrides the global file.
+* **Auto-generated**: missing per-account config or access tokens are written automatically in normalized form on first run.
+
+### Default config [#default-config]
+
+Adapters are grouped by kind under a single `networks` object:
+
+```json
+{
+  "networks": {
+    "httpServers": [
+      {
+        "name": "http-default",
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 3000,
+        "path": "/",
+        "accessToken": "auto-generated",
+        "messageFormat": "array",
+        "reportSelfMessage": false
+      }
+    ],
+    "httpClients": [],
+    "wsServers": [
+      {
+        "name": "ws-default",
+        "enabled": true,
+        "host": "0.0.0.0",
+        "port": 3001,
+        "path": "/",
+        "role": "Universal",
+        "accessToken": "auto-generated",
+        "messageFormat": "array",
+        "reportSelfMessage": false
+      }
+    ],
+    "wsClients": []
+  },
+  "musicSignUrl": ""
+}
+```
+
+<Callout type="info">
+  **Migrating from the old format**: earlier versions kept `httpServers` / `wsServers` arrays at the top level and used `httpPostEndpoints` for reporting. SnowLuma detects this layout, moves the entries into the `networks` object, renames `httpPostEndpoints` to `httpClients`, and writes the result back to disk. If you maintain configs by hand, use the new shape.
+</Callout>
+
+### Shared fields [#shared-fields]
+
+Every adapter accepts these (`NetworkBase`):
+
+| Field               | Type   | Default  | Notes                                                                                                      |
+| ------------------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `name`              | string | required | Identifier unique within its kind array; hot-reload addresses it by `(kind, name)`.                        |
+| `enabled`           | bool   | `true`   | Set `false` to keep the configuration but skip starting this adapter.                                      |
+| `accessToken`       | string | auto     | OneBot bearer / `?access_token=`.                                                                          |
+| `messageFormat`     | string | `array`  | `array` or `string` — controls whether the event `message` field is a segment array or a flattened string. |
+| `reportSelfMessage` | bool   | `false`  | When `true`, this adapter sees `post_type='message_sent'` events.                                          |
+
+### `httpServers` [#httpservers]
+
+OneBot HTTP API listener.
+
+| Field  | Type   | Default   | Notes            |
+| ------ | ------ | --------- | ---------------- |
+| `host` | string | `0.0.0.0` | Bind address.    |
+| `port` | number | `3000`    | Listen port.     |
+| `path` | string | `/`       | API path prefix. |
+
+### `httpClients` [#httpclients]
+
+Push events to external endpoints (formerly `httpPostEndpoints`).
+
+| Field       | Type   | Default  | Notes            |
+| ----------- | ------ | -------- | ---------------- |
+| `url`       | string | required | Report URL.      |
+| `timeoutMs` | number | `5000`   | Request timeout. |
+
+### `wsServers` [#wsservers]
+
+OneBot WebSocket server.
+
+| Field  | Type   | Default     | Notes                                                                                          |
+| ------ | ------ | ----------- | ---------------------------------------------------------------------------------------------- |
+| `host` | string | `0.0.0.0`   | Bind address.                                                                                  |
+| `port` | number | `3001`      | Listen port.                                                                                   |
+| `path` | string | `/`         | WebSocket path.                                                                                |
+| `role` | string | `Universal` | `Api`, `Event`, or `Universal` (**TitleCase**; older lowercase values are no longer accepted). |
+
+### `wsClients` [#wsclients]
+
+Connect outbound to reverse WebSocket servers.
+
+| Field                 | Type   | Default     | Notes                                            |
+| --------------------- | ------ | ----------- | ------------------------------------------------ |
+| `url`                 | string | required    | Reverse WebSocket URL.                           |
+| `role`                | string | `Universal` | Same values as `wsServers.role`.                 |
+| `reconnectIntervalMs` | number | `5000`      | Reconnect interval; clamped to a `1000` minimum. |
+
+### `musicSignUrl` [#musicsignurl]
+
+Optional URL for a custom music-card signing service. Empty string disables.
+
+## Runtime config (`runtime.json`) [#runtime-config-runtimejson]
+
+`config/runtime.json` carries process-wide settings — **not per-account**. A missing file, or one with missing fields, is backfilled and rewritten on load.
+
+```json
+{
+  "webuiPort": 5099,
+  "webuiHost": "127.0.0.1",
+  "hookAutoLoad": false,
+  "webuiTls": { "enabled": false },
+  "trustProxy": "",
+  "logMaxTotalMb": 1024,
+  "logRetainDays": 7,
+  "logPerUin": false
+}
+```
+
+| Field              | Type   | Default     | Notes                                                                                                                                      |
+| ------------------ | ------ | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `webuiPort`        | number | `5099`      | WebUI listen port; anything outside `1..65535` falls back to the default.                                                                  |
+| `webuiHost`        | string | `127.0.0.1` | WebUI bind address. **Loopback only by default** — set `0.0.0.0` to reach it from another machine. Listener-level: change needs a restart. |
+| `hookAutoLoad`     | bool   | `false`     | Auto-inject the hook into every newly discovered QQ process. The Docker image turns this on via `supervisord.conf`.                        |
+| `webuiTls.enabled` | bool   | `false`     | Serve HTTPS using `config/cert.pem` + `config/key.pem`. Listener-level: change needs a restart.                                            |
+| `trustProxy`       | string | `""`        | Trusted reverse-proxy directive used to resolve the client IP; empty means trust nobody.                                                   |
+| `logMaxTotalMb`    | number | `1024`      | Aggregate size cap for every managed file under the log root.                                                                              |
+| `logRetainDays`    | number | `7`         | Calendar-day retention; `0` disables date-based deletion.                                                                                  |
+| `logPerUin`        | bool   | `false`     | Duplicate UIN-scoped lines into `logs/<uin>/` in addition to the shared log.                                                               |
+
+<Callout type="warn">
+  **`webuiHost` defaults to `127.0.0.1`** — loopback only. In Docker, override it with `SNOWLUMA_WEBUI_HOST=0.0.0.0`, otherwise the published ports cannot reach the WebUI.
+</Callout>
+
+## Environment variables [#environment-variables]
+
+Environment variables **win over** `runtime.json` and apply in memory only — they are never written back, which makes them the right knob for Docker and launchers.
+
+| Var                                                | Field              | Notes                                                                           |
+| -------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------- |
+| `SNOWLUMA_WEBUI_PORT`                              | `webuiPort`        | WebUI listen port.                                                              |
+| `SNOWLUMA_WEBUI_HOST`                              | `webuiHost`        | WebUI bind address; use `0.0.0.0` in Docker.                                    |
+| `SNOWLUMA_WEBUI_TLS`                               | `webuiTls.enabled` | `1` / `true` serves HTTPS, `0` / `false` off.                                   |
+| `SNOWLUMA_WEBUI_TRUST_PROXY`                       | `trustProxy`       | Trusted proxy directive; `0` / `off` means trust nobody.                        |
+| `SNOWLUMA_LOG_MAX_TOTAL_MB`                        | `logMaxTotalMb`    | Log size cap.                                                                   |
+| `SNOWLUMA_LOG_RETAIN_DAYS`                         | `logRetainDays`    | Log retention in days.                                                          |
+| `SNOWLUMA_LOG_PER_UIN`                             | `logPerUin`        | Per-UIN log directories.                                                        |
+| `SNOWLUMA_HOOK_AUTOLOAD`                           | `hookAutoLoad`     | `1` / `true` forces auto-injection on; `0` / `false` off.                       |
+| `SNOWLUMA_LOG_LEVEL`                               | —                  | Log level (`error` / `warn` / `info` / `debug`).                                |
+| `SNOWLUMA_VERBOSE_WARMUP`                          | —                  | Set to `1` for verbose friend / group / member warm-up logs.                    |
+| `SNOWLUMA_DEV_MODE`                                | —                  | Set to `1` for dev mode (relaxes WebUI auth; local debugging only).             |
+| `SNOWLUMA_DEV_WEBUI`                               | —                  | Set to `1` to force-start the bundled WebUI under dev mode.                     |
+| `SNOWLUMA_ACCEPT_EULA` / `SNOWLUMA_ACCEPT_PRIVACY` | —                  | Set both to `1` to skip the first-boot consent page for unattended deployments. |
+
+## Port conflicts [#port-conflicts]
+
+If `3000` / `3001` / `5099` are taken, change the matching `port` / `webuiPort` and restart. Docker users can also remap host ports via Compose (see [Docker deployment](/docs/docker)).
+
+
+# Developer guide (/en/docs/developer)
+
+
+
+SnowLuma is a TypeScript + native-module hybrid. TypeScript handles runtime orchestration, the OneBot implementation, the protocol bridge, the SDK, and the WebUI; native modules cover the hook, injection, and the high-performance WebSocket implementation.
+
+## Requirements [#requirements]
+
+| Item    | Required                   | Source of truth                                                                  |
+| ------- | -------------------------- | -------------------------------------------------------------------------------- |
+| Node.js | `^24.22.1` or `>=26.12.1`  | `engines` in `package.json`; older 24.x releases are below the security baseline |
+| pnpm    | `11.25.0` (pinned)         | `packageManager` field                                                           |
+| QQ      | NTQQ with a visible window | the hook needs a headed client                                                   |
+
+`.node-version` pins `24.22.1`; CI and the release bundles build against it. Changing that pin alone does not upgrade an existing installation's runtime.
+
+## Monorepo layout [#monorepo-layout]
+
+pnpm workspace with fourteen packages:
+
+```text
+SnowLuma/
+├─ packages/
+│  ├─ core/        @snowluma/core       entry, bridge orchestration, WebUI backend, release assembly
+│  ├─ bridge/      @snowluma/bridge     QQ process discovery, login detection, hook sessions
+│  ├─ protocol/    @snowluma/protocol   packet decoding, typed QQ events, identity resolution
+│  ├─ onebot/      @snowluma/onebot     action validation and dispatch, event conversion, adapters
+│  ├─ common/      @snowluma/common     logging, config, version, shared utilities
+│  ├─ sqlite/      @snowluma/sqlite     async SQLite facade, native loader, prebuild selection
+│  ├─ proto-defs/  @snowluma/proto-defs typed protocol schemas
+│  ├─ proton/      @snowluma/proton     compile-time protobuf codecs and build integration
+│  ├─ websocket/   @snowluma/websocket  in-tree WS implementation (native fast path)
+│  ├─ runtime/     @snowluma/runtime    distribution manifest, launchers, bundled natives
+│  ├─ webui/       webui                React + Vite console
+│  ├─ ui/          @snowluma/ui         published UI component package
+│  ├─ sdk/         @snowluma/sdk        typed OneBot client for external use
+│  └─ mcp/         @snowluma/mcp        MCP server and generated action catalog
+├─ docker/         container build inputs (Dockerfile / start.sh / supervisord / compose)
+├─ tools/          helper scripts (version bump, release, release-layout check)
+├─ compat/         compatibility layer
+├─ assets/         README and documentation imagery
+└─ package.json
+```
+
+Native artefacts live in `packages/runtime/native/` and are copied into `dist/native/` by the build.
+
+## Core startup chain [#core-startup-chain]
+
+Entry point: [`packages/core/src/index.ts`](https://github.com/Roozenlz/SnowLuma/blob/main/packages/core/src/index.ts).
+
+```text
+loadRuntimeConfig()           ← reads config/runtime.json / env
+  ↓
+applyPendingUpdate()          ← lands a staged update before anything else
+  ↓
+HookManager(autoLoadOnDiscovery)
+  ↓
+BridgeManager
+  ↓
+OneBotManager                 ← spins up OneBotInstance per UIN
+  ↓
+initWebUI(port=webuiPort)     ← full builds only
+```
+
+What the runtime creates:
+
+* **`HookManager`** — discovers QQ main processes and injects the native addon. With `hookAutoLoad: true`, every new PID gets injected automatically.
+* **`BridgeManager`** — decodes hook messages from the named pipe into bridge events; caches rkey / contacts / group members.
+* **`OneBotManager`** — owns `OneBotInstance`s keyed by UIN; each instance has its own `MessageStore`, `MediaStore`, and `NetworkManager`.
+* **`initWebUI`** — full builds boot the WebUI; default port `5099` (override via `runtime.json.webuiPort`).
+
+Core stays a single bundle and native libraries load lazily, so startup can recover an interrupted update before opening any native file.
+
+## Hook + native modules [#hook--native-modules]
+
+The native hook module is loaded via `process.dlopen()`. Source lives in the separate [`SnowLuma/nnphook`](https://github.com/SnowLuma/nnphook) repo.
+
+Filename convention:
+
+```text
+snowluma-win32-x64.node    snowluma-win32-x64.dll
+snowluma-linux-x64.node    snowluma-linux-x64.so
+snowluma-linux-arm64.node  snowluma-linux-arm64.so
+```
+
+WebSocket natives follow the same rule: `websocket-<platform>-<arch>.node`.
+
+Load search paths:
+
+```text
+native/
+dist/native/
+packages/runtime/native/
+```
+
+Native addon API:
+
+* **`getAllMainProcess`** — enumerate QQ main processes.
+* **`loadModuleManual`** — manually map the injection module into the target process.
+* **`unloadModuleManual`** — unload an injected module.
+
+Default target process is `QQ.exe` on Windows, `qq` on Linux. The interface is fully async, so the application and the native artefacts must be updated together.
+
+## OneBot lifecycle [#onebot-lifecycle]
+
+When the bridge detects a QQ session starting:
+
+1. Load `config/onebot_<uin>.json` (or copy from global if missing).
+2. Construct `OneBotInstance`.
+3. Boot HTTP / WS / reverse WS / HTTP-POST adapters per `networks.*` config.
+4. Asynchronously warm up the friend list, group list, and group members.
+5. Forward bridge events into OneBot events.
+
+When the session closes the matching instance is released.
+
+## WebSocket package [#websocket-package]
+
+`@snowluma/websocket` is the in-repo WebSocket implementation; its surface tracks `ws` closely while routing through a native fast path.
+
+Exports:
+
+* **`WebSocket`** — client constructor.
+* **`WebSocketServer`** — server constructor.
+* **`Server`** — alias for `WebSocketServer`.
+* **`InternalWebSocket`** — internal connection implementation.
+
+Loads its own platform-specific `.node` from the same `native/` search paths.
+
+## SDK and MCP [#sdk-and-mcp]
+
+`@snowluma/sdk` is a typed OneBot client meant for downstream consumers:
+
+* HTTP, WebSocket, and reverse-WS transports.
+* Auto-reconnect, event subscription, ack correlation.
+* Shares action types with `@snowluma/core` so they cannot drift.
+
+`@snowluma/mcp` exposes the action catalog as MCP tools for agent callers. Both publish to npm independently of the SnowLuma runtime.
+
+## Dev scripts [#dev-scripts]
+
+```bash
+pnpm install --frozen-lockfile   # resolve dependency changes properly; don't drop the lockfile
+pnpm dev              # core dev mode
+pnpm dev:web          # WebUI dev server
+pnpm build            # core only
+pnpm build:webui      # WebUI only
+pnpm build:sdk        # SDK only
+pnpm build:mcp        # MCP only
+pnpm build:all        # core + SDK + MCP + UI + WebUI
+pnpm test             # workflow policy checks + all workspace tests
+pnpm test:workflows   # repository policy tests; no GitHub writes
+pnpm test:native      # native smoke tests (needs matching natives)
+pnpm typecheck        # workspace typecheck
+pnpm lint             # workspace lint
+pnpm ci               # reproduce every CI command locally
+```
+
+## Build order [#build-order]
+
+Full distribution:
+
+```bash
+pnpm build:all
+```
+
+Runs, in order:
+
+1. `@snowluma/core` full build (`BUILD_WEBUI=true`)
+2. `@snowluma/sdk`
+3. `@snowluma/mcp`
+4. `webui` (with `@snowluma/ui` built first)
+
+Output goes to the repo root `dist/`; `pnpm check:release-layout` then validates the file manifest and native artefacts.
+
+## Versioning and release [#versioning-and-release]
+
+The root `package.json` owns the version; packages read it through `@snowluma/common/version`.
+
+```bash
+pnpm bump 2.4.3        # sync the root and every workspace package
+pnpm release 2.4.3     # full pipeline: CI → bump → dev → Promote → main → tag
+pnpm release 2.4.3 --dry-run   # print the plan only
+```
+
+`pnpm release` relies on the `chore(release): vX.Y.Z` commit on `dev` to trigger the Promote workflow. Re-run the same command to resume a pipeline that failed part-way; never amend the release commit.
+
+If you only maintain your own fork and skip Promote, bump and tag by hand:
+
+```bash
+# after updating version in every package.json
+git commit -am "chore(release): v2.4.3"
+git tag -a v2.4.3 -m "v2.4.3"
+git push origin main v2.4.3
+```
+
+The tag triggers `release.yml`: three-platform build → GitHub Release → Docker image publication.
+
+## CI workflows [#ci-workflows]
+
+| Workflow                      | Trigger                 | Purpose                                                    |
+| ----------------------------- | ----------------------- | ---------------------------------------------------------- |
+| `ci.yml`                      | PR / push               | test, typecheck, build, lint                               |
+| `dev-build.yml`               | any branch push         | three-platform build; `dev` also publishes the `dev` image |
+| `release.yml`                 | `v*` tag                | release + Docker image publication                         |
+| `docker-image.yml`            | called by the two above | reusable image build implementation                        |
+| `dispatch-docker-release.yml` | manual                  | rebuild a historical tag's image without re-tagging        |
+
+Repository configuration the image build needs:
+
+| Kind     | Name                 | Purpose                            |
+| -------- | -------------------- | ---------------------------------- |
+| Secret   | `DOCKERHUB_USERNAME` | Docker Hub account                 |
+| Secret   | `DOCKERHUB_TOKEN`    | Access token with Read & Write     |
+| Variable | `DOCKER_IMAGE`       | Image name, e.g. `roozen/snowluma` |
+| Variable | `DOCKER_PLATFORMS`   | e.g. `linux/amd64,linux/arm64`     |
+
+## Docs site [#docs-site]
+
+This site lives in [`Roozenlz/SnowLumaDocs`](https://github.com/Roozenlz/SnowLumaDocs).
+
+Stack: Next.js 16 + Fumadocs + Tailwind 4 + MDX. Pushing to `main` static-exports to `gh-pages` via `.github/workflows/deploy.yml`.
+
+The OneBot API reference is generated by the docs repo's `tools/generate-onebot-openapi.mjs`, which statically scans the action definitions in the main repo and writes `content/api/openapi.json`. Re-run after adding or renaming actions.
+
+## Contribution notes [#contribution-notes]
+
+* **Don't bypass `BridgeManager`** — every OneBot action should reach NTQQ through `BridgeInterface`. Keeps the OneBot layer decoupled and testable.
+* **Keep configs auto-generatable** — new fields must stay backwards-compatible; normalize them on load and write the result back.
+* **Native modules are per-platform** — when adding a platform, sync the `.node` and the injectable library.
+* **Tests first** — core OneBot behavior should be validated with `vitest`; see each package's `tests/`.
+* **Regenerate the action catalog** — after changing an action, run `pnpm --filter @snowluma/mcp gen` and commit the generated `catalog.ts` / `catalog.json`; `tools/check-action-catalog.mjs` rejects drift in CI.
+* **Formatting** — TypeScript uses four-space indentation via `pnpm format`; don't hand-adjust style in business code.
+
+
+# Docker deployment (/en/docs/docker)
+
+
+
+On Linux, SnowLuma runs **only via Docker**. The image bundles Linux QQ + Xvfb + VNC + noVNC + supervisord + the SnowLuma `lite` distribution, so the host needs nothing beyond Docker.
+
+The build inputs (`Dockerfile`, `start.sh`, `supervisord.conf`, `docker-compose.yml`) live in the main repo's [`docker/`](https://github.com/Roozenlz/SnowLuma/tree/main/docker) directory, and the build runs in that repo's own GitHub Actions — no external repository involved.
+
+## Image [#image]
+
+| Item    | Value                                                        |
+| ------- | ------------------------------------------------------------ |
+| Image   | `roozen/snowluma:latest` (or a specific tag, e.g. `:v2.4.3`) |
+| Arch    | `linux/amd64`, `linux/arm64`                                 |
+| Base    | `node:22-bookworm-slim`                                      |
+| Bundled | Linux QQ, Xvfb, VNC, noVNC, supervisord, SnowLuma `lite`     |
+
+The image does **not** rebuild SnowLuma — it consumes the prebuilt `lite` tarball from each GitHub Release, so the release and the image build are decoupled.
+
+### Tag policy [#tag-policy]
+
+| Tag         | Published by    | Notes                                                                                       |
+| ----------- | --------------- | ------------------------------------------------------------------------------------------- |
+| `latest`    | `release.yml`   | Moves only with **stable** tags (no `-` in the tag name); always the newest formal release. |
+| `v2.4.3`    | `release.yml`   | One per tag, matching the GitHub Release 1:1.                                               |
+| `dev`       | `dev-build.yml` | Rolling rebuild on every push to `dev`; `linux/amd64` only.                                 |
+| `dev-<sha>` | `dev-build.yml` | Immutable snapshot of the same build, for pinning and rollback.                             |
+
+Treat `dev` images as integration builds, not production deployments.
+
+## Ports [#ports]
+
+| Port   | Purpose                                        |
+| ------ | ---------------------------------------------- |
+| `5900` | VNC (remote desktop — needed to scan-login QQ) |
+| `6081` | noVNC (browser VNC, no client needed)          |
+| `5099` | SnowLuma WebUI                                 |
+| `3000` | OneBot HTTP (default)                          |
+| `3001` | OneBot WebSocket (default)                     |
+
+## Host setup: relax the ptrace policy [#host-setup-relax-the-ptrace-policy]
+
+<Callout type="warn">
+  **Do this before starting the container, otherwise hook injection will fail at runtime.**
+</Callout>
+
+SnowLuma's native addon uses `ptrace` to inject the hook into the in-container QQ process. Modern Linux distros (Ubuntu / Debian / Arch / …) ship with `kernel.yama.ptrace_scope` set to `1` or higher, which means **even with `--cap-add=SYS_PTRACE` on the container, the host kernel still blocks the ptrace call**.
+
+Run **once** on the host:
+
+```bash
+echo 'kernel.yama.ptrace_scope=0' | sudo tee /etc/sysctl.d/99-snowluma-ptrace.conf
+sudo sysctl --system
+```
+
+Verify:
+
+```bash
+sysctl kernel.yama.ptrace_scope
+# expected: kernel.yama.ptrace_scope = 0
+```
+
+Writing to `/etc/sysctl.d/99-snowluma-ptrace.conf` keeps the setting across reboots. If your host has stricter security requirements (multi-tenant, internet-facing), prefer a dedicated isolated host (bare metal / VM) over relaxing the system-wide policy.
+
+## One-line docker run [#one-line-docker-run]
+
+```bash
+docker run -d \
+  --name snowluma \
+  --restart unless-stopped \
+  --shm-size=1g \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  -e VNC_PASSWD=vncpasswd \
+  -p 5900:5900 \
+  -p 6081:6081 \
+  -p 5099:5099 \
+  -p 3000:3000 \
+  -p 3001:3001 \
+  -v snowluma-data:/app/snowluma-data \
+  -v snowluma-qq-config:/app/.config \
+  -v snowluma-qq-data:/app/.local/share \
+  roozen/snowluma:latest
+```
+
+<Callout type="warn">
+  `--cap-add=SYS_PTRACE` and `--security-opt seccomp=unconfined` are **mandatory**. SnowLuma's native addon uses ptrace to inject the hook into the QQ process; the default seccomp profile blocks that.
+</Callout>
+
+`--shm-size=1g` is needed for QQ's Chromium runtime — the default container `/dev/shm` is too small and QQ will crash.
+
+## docker-compose [#docker-compose]
+
+Recommended over `docker run`. The main repo already ships [`docker/docker-compose.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/docker/docker-compose.yml) — use it as-is.
+
+```yaml
+services:
+  snowluma:
+    image: ${SNOWLUMA_IMAGE:-roozen/snowluma:latest}
+    container_name: ${SNOWLUMA_CONTAINER:-snowluma}
+    restart: unless-stopped
+    shm_size: 1gb
+    # Each QQ instance is a full Chromium process; the default 1024 descriptors are not enough for several.
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 1048576
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      VNC_PASSWD: ${VNC_PASSWD:-vncpasswd}
+      SNOWLUMA_UID: ${SNOWLUMA_UID:-1000}
+      SNOWLUMA_GID: ${SNOWLUMA_GID:-1000}
+      SNOWLUMA_WEBUI_HOST: ${SNOWLUMA_WEBUI_HOST:-0.0.0.0}
+      SNOWLUMA_WEBUI_PORT: ${SNOWLUMA_WEBUI_PORT:-5099}
+      SNOWLUMA_LOG_LEVEL: ${SNOWLUMA_LOG_LEVEL:-info}
+      SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x24}
+      SNOWLUMA_HOOK_AUTOLOAD: ${SNOWLUMA_HOOK_AUTOLOAD:-1}
+      SNOWLUMA_QQ_FLAGS: "${SNOWLUMA_QQ_FLAGS:-}"
+      SNOWLUMA_EXTRA_QQ_HOMES: "${SNOWLUMA_EXTRA_QQ_HOMES:-}"
+    ports:
+      # noVNC / WebUI / VNC bind loopback by default; set SNOWLUMA_BIND_IP for external access.
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${VNC_PORT:-5900}:5900"
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${NOVNC_PORT:-6081}:6081"
+      - "${SNOWLUMA_BIND_IP:-127.0.0.1}:${SNOWLUMA_WEBUI_HOST_PORT:-5099}:${SNOWLUMA_WEBUI_PORT:-5099}"
+      # OneBot stays on all interfaces so other containers and bots can reach it.
+      - "${ONEBOT_HTTP_PORT:-3000}:3000"
+      - "${ONEBOT_WS_PORT:-3001}:3001"
+    volumes:
+      - snowluma-data:/app/snowluma-data
+      - snowluma-qq-config:/app/.config
+      - snowluma-qq-data:/app/.local/share
+
+volumes:
+  snowluma-data:
+  snowluma-qq-config:
+  snowluma-qq-data:
+```
+
+`ulimits.nofile` exists for multi-account setups: one account is fine, but each QQ is a full Chromium process and three or four of them will hit the default 1024 descriptor limit — you'll see `EMFILE: too many open files` in the logs.
+
+noVNC / WebUI / VNC bind `127.0.0.1` by default, so nothing is reachable from the public interface. Two ways to get in:
+
+```bash
+# 1. Open it up temporarily (change VNC_PASSWD first)
+SNOWLUMA_BIND_IP=0.0.0.0 docker compose -f docker/docker-compose.yml up -d
+
+# 2. Recommended: keep loopback and tunnel over SSH
+ssh -L 5099:127.0.0.1:5099 -L 6081:127.0.0.1:6081 user@server
+# then open http://localhost:5099 and http://localhost:6081 locally
+```
+
+Start (from the repo root):
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+Upgrade:
+
+```bash
+docker compose -f docker/docker-compose.yml pull
+docker compose -f docker/docker-compose.yml up -d
+```
+
+To track one specific version, pin it in `.env`:
+
+```bash
+SNOWLUMA_IMAGE=roozen/snowluma:v2.4.3
+```
+
+## Environment variables [#environment-variables]
+
+| Var                       | Default        | Notes                                                                                                                                                             |
+| ------------------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `VNC_PASSWD`              | `vncpasswd`    | VNC / noVNC login password. **Change this**, otherwise anyone can see your QQ desktop.                                                                            |
+| `SNOWLUMA_UID`            | `1000`         | uid of the in-container `snowluma` user. Match it to the host owner of your mounted volumes.                                                                      |
+| `SNOWLUMA_GID`            | `1000`         | gid of the in-container `snowluma` user.                                                                                                                          |
+| `SNOWLUMA_WEBUI_HOST`     | `0.0.0.0`      | WebUI bind address. The binary itself binds loopback only; the image opens it up, otherwise the published port can't reach it.                                    |
+| `SNOWLUMA_WEBUI_PORT`     | `5099`         | WebUI listen port (inside the container).                                                                                                                         |
+| `SNOWLUMA_LOG_LEVEL`      | `info`         | `error` / `warn` / `info` / `debug`.                                                                                                                              |
+| `SNOWLUMA_SCREEN`         | `1920x1080x24` | Xvfb resolution + color depth.                                                                                                                                    |
+| `SNOWLUMA_HOOK_AUTOLOAD`  | `1`            | Image opts into auto-injection by default. Set `0` to fall back to the manual Load workflow.                                                                      |
+| `SNOWLUMA_QQ_FLAGS`       | empty          | Extra flags appended to the QQ command line, space separated. On GPU-less hosts try `--disable-gpu --disable-software-rasterizer`.                                |
+| `SNOWLUMA_EXTRA_QQ_HOMES` | empty          | Extra QQ account `HOME` directories, comma or space separated; each one gets its own supervisord program. See [multiple accounts](#running-multiple-qq-accounts). |
+
+Environment variables override `runtime.json`, so they're the ergonomic knob in Docker.
+
+## Volumes [#volumes]
+
+| Volume               | Container path       | Contents                                                                                 |
+| -------------------- | -------------------- | ---------------------------------------------------------------------------------------- |
+| `snowluma-data`      | `/app/snowluma-data` | SnowLuma config, cache, SQLite. Includes `config/onebot.json` and `config/runtime.json`. |
+| `snowluma-qq-config` | `/app/.config`       | QQ client config.                                                                        |
+| `snowluma-qq-data`   | `/app/.local/share`  | QQ user data (login state, cache).                                                       |
+
+**Don't delete these on upgrade** — you'll lose login state and configuration.
+
+## First-time login [#first-time-login]
+
+1. Open `http://<host>:6081/` (noVNC) and enter `VNC_PASSWD`.
+2. Inside the remote desktop you'll see QQ already running. Scan the QR to log in.
+3. Once login completes the hook auto-switches from passive observation to working mode — no need to click Load in the WebUI.
+4. Open `http://<host>:5099/` for the SnowLuma WebUI.
+
+### Finding the WebUI bootstrap password [#finding-the-webui-bootstrap-password]
+
+On a fresh data volume the first launch logs a one-time password:
+
+```bash
+docker logs snowluma 2>&1 | grep -E "临时密码|initial credentials" | tail -n 1
+```
+
+Just the password string:
+
+```bash
+docker logs snowluma 2>&1 | \
+  sed -nE 's/.*(临时密码: |initial credentials: user=admin password=)([^[:space:]]+).*/\2/p' | tail -n 1
+```
+
+<Callout type="info">
+  The bootstrap password is logged **only on a brand-new data volume's first boot**. Reusing the volume or restarting won't regenerate it.
+</Callout>
+
+## Running multiple QQ accounts [#running-multiple-qq-accounts]
+
+Linux QQ ships a single-instance lock — clicking the QQ icon again on a desktop that already has one running just focuses the existing window, it doesn't start a second process. The lock file lives at `$HOME/.config/QQ/SingletonLock`, so every instance needs its &#x2A;*own `HOME`**.
+
+SnowLuma needs no extra configuration: [HookManager](https://github.com/Roozenlz/SnowLuma/blob/main/packages/bridge/src/hook-manager.ts) walks every QQ main process it can find, injects the hook into each, and spins up a separate `OneBotInstance` per UIN with its own `config/onebot_<uin>.json`.
+
+### Declare them with `SNOWLUMA_EXTRA_QQ_HOMES` (recommended) [#declare-them-with-snowluma_extra_qq_homes-recommended]
+
+List the extra `HOME` directories and supervisord manages one QQ process per entry — a crash restarts **only that account**, leaving the others untouched:
+
+```yaml
+services:
+  snowluma:
+    environment:
+      SNOWLUMA_EXTRA_QQ_HOMES: /app/qq-acct2,/app/qq-acct3
+    volumes:
+      - snowluma-data:/app/snowluma-data
+      - snowluma-qq-config:/app/.config
+      - snowluma-qq-data:/app/.local/share
+      - snowluma-qq2:/app/qq-acct2     # second account's full HOME
+      - snowluma-qq3:/app/qq-acct3     # third account
+
+volumes:
+  snowluma-data:
+  snowluma-qq-config:
+  snowluma-qq-data:
+  snowluma-qq2:
+  snowluma-qq3:
+```
+
+Separate paths with commas or spaces. The leading `/app` (primary account) is skipped automatically; duplicates and relative paths are ignored with a message in the log. Missing directories are created at startup.
+
+After boot, `docker logs snowluma` prints something like:
+
+```text
+supervisord: 3 QQ program(s), no extra flags, config: /etc/supervisord.run.conf
+```
+
+Each account becomes a `[program:qq-<dirname>]` you can inspect individually:
+
+```bash
+docker exec snowluma supervisorctl status
+# qq                       RUNNING
+# qq-qq-acct2              RUNNING
+# qq-qq-acct3              RUNNING
+# snowluma                 RUNNING
+```
+
+<Callout type="info">
+  **Don't forget the volumes.** Declaring a HOME without mounting a volume for it means the account logs in fine but loses its session when the container is recreated.
+</Callout>
+
+### Starting one by hand from the noVNC desktop [#starting-one-by-hand-from-the-novnc-desktop]
+
+For a throwaway account you don't want in compose, use the noVNC terminal:
+
+```bash
+mkdir -p /app/qq-temp
+HOME=/app/qq-temp qq --no-sandbox &
+disown
+```
+
+`disown` detaches QQ from the terminal so closing the window won't kill it. This path does not restart automatically and does not survive a container restart.
+
+### Caveats [#caveats]
+
+* **One HOME per QQ instance** — never share a `HOME` between two QQs; they'll fight over the lock file.
+
+* **Resources**: each QQ is a full Chromium process, \~300-500 MB RAM. The default `--shm-size=1g` is fine for one; bump to `2gb`+ for multi-account.
+
+* **All windows share the same Xvfb desktop**: noVNC shows every QQ window; minimize the ones you've already logged into. Hook keeps working regardless of window state.
+
+* **WebUI lists every UIN automatically**: no manual configuration — SnowLuma surfaces each new account in the WebUI and `get_login_info` returns the new UINs once login completes.
+
+* **All windows share the same Xvfb desktop**: noVNC shows every QQ window; minimize the ones you've already logged into. Hook keeps working regardless of window state.
+
+* **WebUI lists every UIN automatically**: no manual configuration — SnowLuma surfaces each new account in the WebUI and `get_login_info` returns the new UINs once login completes.
+
+## Auto-injection [#auto-injection]
+
+The image defaults to `SNOWLUMA_HOOK_AUTOLOAD=1`: when the container starts, the hook is injected into the QQ process in passive-observe mode. Once you scan-login, the hook auto-promotes to working mode. supervisor also restarts QQ on crash through the same flow.
+
+### Turning it off [#turning-it-off]
+
+If you prefer the legacy "manual Load via WebUI" workflow:
+
+```bash
+docker run -e SNOWLUMA_HOOK_AUTOLOAD=0 ... roozen/snowluma:latest
+```
+
+Or set `SNOWLUMA_HOOK_AUTOLOAD: 0` in `docker-compose.yml`, or edit `/app/snowluma-data/config/runtime.json` inside the volume to `"hookAutoLoad": false`. Environment variables win.
+
+## Common ops [#common-ops]
+
+Shell into the container:
+
+```bash
+docker exec -it snowluma bash
+```
+
+Follow logs:
+
+```bash
+docker logs -f snowluma
+```
+
+Just SnowLuma's own logs (filter out QQ's noisy output):
+
+```bash
+docker logs -f snowluma 2>&1 | grep -v "QtNetwork\|GLib\|libQt6"
+```
+
+Browse the data directory:
+
+```bash
+docker exec -it snowluma bash -c "cd /app/snowluma-data && ls -la"
+```
+
+Edit OneBot config and restart:
+
+```bash
+# edit /app/snowluma-data/config/onebot_<uin>.json
+docker restart snowluma
+```
+
+## Port remapping [#port-remapping]
+
+If a host port is taken, just shift the host side; container ports stay the same. Example moving OneBot HTTP to host `8080`:
+
+```yaml
+ports:
+  - "8080:3000"   # host 8080 → container 3000
+```
+
+Or via env (the Compose template already supports it):
+
+```bash
+ONEBOT_HTTP_PORT=8080 docker compose -f docker/docker-compose.yml up -d
+```
+
+## Building the image yourself [#building-the-image-yourself]
+
+The build context is the main repo's `docker/` directory; the Dockerfile reads `SnowLuma.Framework.tar.gz` from it.
+
+### From a published release [#from-a-published-release]
+
+```bash
+git clone --depth 1 https://github.com/Roozenlz/SnowLuma.git
+cd SnowLuma
+
+TAG=v2.4.3
+gh release download "$TAG" \
+  --pattern "SnowLuma-$TAG-linux-x64-lite.tar.gz" \
+  --output docker/SnowLuma.Framework.tar.gz --clobber
+
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag roozen/snowluma:$TAG docker --load
+```
+
+### From a local build [#from-a-local-build]
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build:all
+
+tar -czf docker/SnowLuma.Framework.tar.gz -C dist .
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag snowluma:local docker --load
+```
+
+`dist/` must contain the complete runtime layout (`index.mjs`, `native/`, `webui/`, `package.json`, …); `pnpm build:all` produces exactly that.
+
+### Multi-arch [#multi-arch]
+
+A local `buildx build` can only `--load` one platform at a time. For a merged amd64 + arm64 manifest, let CI do it:
+
+* **On release**: [`release.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/.github/workflows/release.yml) calls the shared `docker-image.yml` after the Release is published.
+* **Rebuild a historical tag**: run [Rebuild Docker Image](https://github.com/Roozenlz/SnowLuma/actions/workflows/dispatch-docker-release.yml) manually with `snowluma_tag` — no need to re-tag.
+
+### The QQ build baked into the image [#the-qq-build-baked-into-the-image]
+
+The Dockerfile downloads the Linux QQ `.deb` from Tencent's CDN, pinned by three build args:
+
+```dockerfile
+ARG QQ_VERSION=3.2.35-54395
+ARG QQ_CHANNEL=9.9.37/beta
+ARG QQ_HASH=816b3c79
+```
+
+Tencent rotates both the channel directory and the content hash on every release, so stale values 404 immediately. When the build log shows `Unable to download linuxqq_*.deb`, grab the new triple from the [linuxqq PKGBUILD on AUR](https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=linuxqq) and override it:
+
+```bash
+docker buildx build \
+  --build-arg QQ_VERSION=3.2.36-xxxxx \
+  --build-arg QQ_CHANNEL=9.9.38/beta \
+  --build-arg QQ_HASH=xxxxxxxx \
+  --file docker/Dockerfile --tag roozen/snowluma:test docker
+```
+
+
+# Introduction (/en/docs)
+
+
+
+SnowLuma is a Remote Protocol Framework for NTQQ, bridging QQ sessions into the OneBot v11 ecosystem with a structured API for bot development.
+
+## What you can use it for [#what-you-can-use-it-for]
+
+* **OneBot v11**: HTTP, WebSocket, reverse WebSocket, and HTTP event-reporting adapters.
+* **NTQQ bridge**: capture and decode NTQQ packets through the hook, translate them to higher-level events and actions.
+* **Multi-account sessions**: one OneBot instance per UIN, with per-account config that inherits from the global file.
+* **Built-in WebUI**: the full build ships a web console for status, adapter management, and staged updates.
+* **TypeScript SDK and MCP**: `@snowluma/sdk` is a typed OneBot client; `@snowluma/mcp` exposes the same action catalog to agents.
+
+## Requirements [#requirements]
+
+| Item            | Required                                                                    |
+| --------------- | --------------------------------------------------------------------------- |
+| Windows / macOS | Native run; bring your own Node.js                                          |
+| Linux           | Runs [inside Docker](/docs/docker) only (the image bundles QQ + Xvfb + VNC) |
+| Node.js         | `^24.22.1` or `>=26.12.1` (bundled in the full distribution)                |
+| QQ              | NTQQ with a visible window                                                  |
+
+## Two ways to run it [#two-ways-to-run-it]
+
+| Use case          | Recommended path                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Server deployment | [Docker container](/docs/docker) — the image bundles QQ + Xvfb + VNC and works out of the box                             |
+| Local prebuilt    | Grab the matching tarball from [GitHub Releases](https://github.com/Roozenlz/SnowLuma/releases), unpack, run the launcher |
+
+## Release asset names [#release-asset-names]
+
+Every tag publishes three platforms — Windows x64, Linux x64, and Linux arm64:
+
+| File                                | Notes                                                  |
+| ----------------------------------- | ------------------------------------------------------ |
+| `SnowLuma-<TAG>-win-x64.zip`        | Windows full build with Node.js bundled                |
+| `SnowLuma-<TAG>-linux-x64.tar.gz`   | Linux x64 full build                                   |
+| `SnowLuma-<TAG>-linux-arm64.tar.gz` | Linux arm64 full build                                 |
+| `...-lite.zip` / `...-lite.tar.gz`  | No bundled Node.js; requires `^24.22.1` or `>=26.12.1` |
+
+The full build unpacks and runs; the lite build is much smaller and suits containers or hosts that already have Node installed.
+
+## Distribution layout [#distribution-layout]
+
+`pnpm build:all` writes to the repo root `dist/`:
+
+```text
+dist/
+├─ index.mjs            # main entry
+├─ launcher.bat         # Windows launcher
+├─ launcher.sh          # Linux launcher
+├─ package.json
+├─ release.json         # release manifest (version, target, file list)
+├─ webui/               # bundled WebUI assets
+└─ native/              # platform natives
+   ├─ snowluma-<platform>-<arch>.node
+   ├─ snowluma-<platform>-<arch>.so / .dll
+   └─ websocket-<platform>-<arch>.node
+```
+
+After unpacking, run `launcher.bat` on Windows or `./launcher.sh` on Linux.
+
+## Quick start [#quick-start]
+
+1. Unpack the archive that matches your architecture.
+2. Open `http://localhost:5099`.
+3. Sign in with the initial credentials from the startup log, then attach the QQ process and configure OneBot.
+
+For unattended deployments, set both `SNOWLUMA_ACCEPT_EULA=1` and `SNOWLUMA_ACCEPT_PRIVACY=1` to accept the bundled agreements up front; missing either one still shows the consent page.
+
+## Default services [#default-services]
+
+The first time an OneBot instance starts, SnowLuma creates `config/onebot.json`, `config/onebot_<uin>.json`, and `config/runtime.json`.
+
+| Service          | Default address        | Config key                    |
+| ---------------- | ---------------------- | ----------------------------- |
+| OneBot HTTP      | `http://0.0.0.0:3000/` | `networks.httpServers[].port` |
+| OneBot WebSocket | `ws://0.0.0.0:3001/`   | `networks.wsServers[].port`   |
+| WebUI            | `http://0.0.0.0:5099/` | `runtime.json` → `webuiPort`  |
+
+See the [configuration reference](/docs/configuration) for every field.
+
+## Licensing and scope [#licensing-and-scope]
+
+SnowLuma is **source-available under a non-commercial license**, not OSI open source. You may read, study, self-host non-commercially, and modify it privately. Commercial use, and public distribution of modified or derivative versions, require prior written permission. Binary releases are additionally covered by the bundled EULA and privacy policy.
+
+SnowLuma is an independent third-party project with no affiliation or authorization from Tencent / QQ. It is provided for study and research, "as is" and without warranty; follow the QQ terms of service and applicable law.
+
+
+# 点赞 · send_like (/en/docs/extended/send_like)
+
+(see live page for OpenAPI specification)
+
+
+# 戳一戳（好友） · friend_poke (/en/docs/extended/friend_poke)
+
+(see live page for OpenAPI specification)
+
+
+# 戳一戳（群） · group_poke (/en/docs/extended/group_poke)
+
+(see live page for OpenAPI specification)
+
+
+# 戳一戳（统一接口） · send_poke (/en/docs/extended/send_poke)
+
+(see live page for OpenAPI specification)
+
+
+# 设置精华消息 · set_essence_msg (/en/docs/extended/set_essence_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 取消精华消息 · delete_essence_msg (/en/docs/extended/delete_essence_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取精华消息列表 · get_essence_msg_list (/en/docs/extended/get_essence_msg_list)
+
+(see live page for OpenAPI specification)
+
+
+# 群表情回应（别名） · set_group_reaction (/en/docs/extended/set_group_reaction)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群消息历史 · get_group_msg_history (/en/docs/extended/get_group_msg_history)
+
+(see live page for OpenAPI specification)
+
+
+# 获取好友消息历史 · get_friend_msg_history (/en/docs/extended/get_friend_msg_history)
+
+(see live page for OpenAPI specification)
+
+
+# 标记群消息已读 · mark_group_msg_as_read (/en/docs/extended/mark_group_msg_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 标记私聊已读 · mark_private_msg_as_read (/en/docs/extended/mark_private_msg_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 标记消息已读 · mark_msg_as_read (/en/docs/extended/mark_msg_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 RKey · get_rkey (/en/docs/extended/get_rkey)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 RKey（NapCat 兼容） · nc_get_rkey (/en/docs/extended/nc_get_rkey)
+
+(see live page for OpenAPI specification)
+
+
+# 发布群公告 · _send_group_notice (/en/docs/extended/_send_group_notice)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群公告 · _get_group_notice (/en/docs/extended/_get_group_notice)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群公告 · _del_group_notice (/en/docs/extended/_del_group_notice)
+
+(see live page for OpenAPI specification)
+
+
+# 上传合并转发 · upload_forward_msg (/en/docs/extended/upload_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送合并转发 · send_forward_msg (/en/docs/extended/send_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送群合并转发 · send_group_forward_msg (/en/docs/extended/send_group_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送私聊合并转发 · send_private_forward_msg (/en/docs/extended/send_private_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取合并转发 · get_forward_msg (/en/docs/extended/get_forward_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取图片信息 · get_image (/en/docs/extended/get_image)
+
+(see live page for OpenAPI specification)
+
+
+# 获取语音信息 · get_record (/en/docs/extended/get_record)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 Cookies · get_cookies (/en/docs/extended/get_cookies)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 CSRF Token · get_csrf_token (/en/docs/extended/get_csrf_token)
+
+(see live page for OpenAPI specification)
+
+
+# 获取凭证 · get_credentials (/en/docs/extended/get_credentials)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 清理缓存 · clean_cache (/en/docs/extended/clean_cache)
+
+(see live page for OpenAPI specification)
+
+
+# 设置好友备注 · set_friend_remark (/en/docs/extended/set_friend_remark)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群备注 · set_group_remark (/en/docs/extended/set_group_remark)
+
+(see live page for OpenAPI specification)
+
+
+# 对消息回应表情 · set_msg_emoji_like (/en/docs/extended/set_msg_emoji_like)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 标记全部已读 · _mark_all_as_read (/en/docs/extended/_mark_all_as_read)
+
+(see live page for OpenAPI specification)
+
+
+# 群文件系统信息 · get_group_file_system_info (/en/docs/extended/get_group_file_system_info)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] URL 安全检查 · check_url_safely (/en/docs/extended/check_url_safely)
+
+(see live page for OpenAPI specification)
+
+
+# 下载文件 · download_file (/en/docs/extended/download_file)
+
+(see live page for OpenAPI specification)
+
+
+# 设置 QQ 资料 · set_qq_profile (/en/docs/extended/set_qq_profile)
+
+(see live page for OpenAPI specification)
+
+
+# 设置在线状态 · set_online_status (/en/docs/extended/set_online_status)
+
+(see live page for OpenAPI specification)
+
+
+# 设置自定义在线状态 · set_diy_online_status (/en/docs/extended/set_diy_online_status)
+
+(see live page for OpenAPI specification)
+
+
+# 获取忽略的入群通知 · get_group_ignored_notifies (/en/docs/extended/get_group_ignored_notifies)
+
+(see live page for OpenAPI specification)
+
+
+# 获取被忽略的加群请求 · get_group_ignore_add_request (/en/docs/extended/get_group_ignore_add_request)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取被禁言成员列表 · get_group_shut_list (/en/docs/extended/get_group_shut_list)
+
+(see live page for OpenAPI specification)
+
+
+# 转发单条消息给好友 · forward_friend_single_msg (/en/docs/extended/forward_friend_single_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 转发单条消息到群 · forward_group_single_msg (/en/docs/extended/forward_group_single_msg)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取最近联系人 · get_recent_contact (/en/docs/extended/get_recent_contact)
+
+(see live page for OpenAPI specification)
+
+
+# 获取点赞信息 · get_profile_like (/en/docs/extended/get_profile_like)
+
+(see live page for OpenAPI specification)
+
+
+# 拉取自定义表情 · fetch_custom_face (/en/docs/extended/fetch_custom_face)
+
+(see live page for OpenAPI specification)
+
+
+# 获取表情回应列表 · get_emoji_likes (/en/docs/extended/get_emoji_likes)
+
+(see live page for OpenAPI specification)
+
+
+# 拉取表情回应（别名） · fetch_emoji_like (/en/docs/extended/fetch_emoji_like)
+
+(see live page for OpenAPI specification)
+
+
+# 获取分组好友列表 · get_friends_with_category (/en/docs/extended/get_friends_with_category)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取在线客户端 · get_online_clients (/en/docs/extended/get_online_clients)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取机型展示 · _get_model_show (/en/docs/extended/_get_model_show)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 设置机型展示 · _set_model_show (/en/docs/extended/_set_model_show)
+
+(see live page for OpenAPI specification)
+
+
+# 查询 @全体剩余次数 · get_group_at_all_remain (/en/docs/extended/get_group_at_all_remain)
+
+(see live page for OpenAPI specification)
+
+
+# 获取单向好友列表 · get_unidirectional_friend_list (/en/docs/extended/get_unidirectional_friend_list)
+
+(see live page for OpenAPI specification)
+
+
+# 设置长签名 · set_self_longnick (/en/docs/extended/set_self_longnick)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 获取收藏列表 · get_collection_list (/en/docs/extended/get_collection_list)
+
+(see live page for OpenAPI specification)
+
+
+# 设置 QQ 头像 · set_qq_avatar (/en/docs/extended/set_qq_avatar)
+
+(see live page for OpenAPI specification)
+
+
+# 设置输入中状态 · set_input_status (/en/docs/extended/set_input_status)
+
+(see live page for OpenAPI specification)
+
+
+# 英译中 · translate_en2zh (/en/docs/extended/translate_en2zh)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 ClientKey · get_clientkey (/en/docs/extended/get_clientkey)
+
+(see live page for OpenAPI specification)
+
+
+# 构造小程序 Ark · get_mini_app_ark (/en/docs/extended/get_mini_app_ark)
+
+(see live page for OpenAPI specification)
+
+
+# 点击内联键盘按钮 · click_inline_keyboard_button (/en/docs/extended/click_inline_keyboard_button)
+
+(see live page for OpenAPI specification)
+
+
+# 群签到 · set_group_sign (/en/docs/extended/set_group_sign)
+
+(see live page for OpenAPI specification)
+
+
+# 群签到（兼容别名） · send_group_sign (/en/docs/extended/send_group_sign)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群信息（扩展） · get_group_info_ex (/en/docs/extended/get_group_info_ex)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群详细信息 · get_group_detail_info (/en/docs/extended/get_group_detail_info)
+
+(see live page for OpenAPI specification)
+
+
+# 发送原始数据包 · send_packet (/en/docs/extended/send_packet)
+
+(see live page for OpenAPI specification)
+
+
+# 退出 Bot · bot_exit (/en/docs/extended/bot_exit)
+
+(see live page for OpenAPI specification)
+
+
+# Packet 状态（NapCat 兼容） · nc_get_packet_status (/en/docs/extended/nc_get_packet_status)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群文件夹（别名） · delete_group_folder (/en/docs/extended/delete_group_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群待办 · set_group_todo (/en/docs/extended/set_group_todo)
+
+(see live page for OpenAPI specification)
+
+
+# 完成群待办 · complete_group_todo (/en/docs/extended/complete_group_todo)
+
+(see live page for OpenAPI specification)
+
+
+# 取消群待办 · cancel_group_todo (/en/docs/extended/cancel_group_todo)
+
+(see live page for OpenAPI specification)
+
+
+# 用户在线状态 · nc_get_user_status (/en/docs/extended/nc_get_user_status)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 AI 角色列表 · get_ai_characters (/en/docs/extended/get_ai_characters)
+
+(see live page for OpenAPI specification)
+
+
+# 获取 AI 语音 URL · get_ai_record (/en/docs/extended/get_ai_record)
+
+(see live page for OpenAPI specification)
+
+
+# 发送 AI 群语音 · send_group_ai_record (/en/docs/extended/send_group_ai_record)
+
+(see live page for OpenAPI specification)
+
+
+# 获取好友列表 · get_friend_list (/en/docs/friend/get_friend_list)
+
+(see live page for OpenAPI specification)
+
+
+# 获取陌生人信息 · get_stranger_info (/en/docs/friend/get_stranger_info)
+
+(see live page for OpenAPI specification)
+
+
+# 删除好友 · delete_friend (/en/docs/friend/delete_friend)
+
+(see live page for OpenAPI specification)
+
+
+# 踢出群成员 · set_group_kick (/en/docs/group-admin/set_group_kick)
+
+(see live page for OpenAPI specification)
+
+
+# 批量踢出群成员 · set_group_kick_members (/en/docs/group-admin/set_group_kick_members)
+
+(see live page for OpenAPI specification)
+
+
+# 禁言群成员 · set_group_ban (/en/docs/group-admin/set_group_ban)
+
+(see live page for OpenAPI specification)
+
+
+# 全员禁言 · set_group_whole_ban (/en/docs/group-admin/set_group_whole_ban)
+
+(see live page for OpenAPI specification)
+
+
+# 设置加群方式 · set_group_add_option (/en/docs/group-admin/set_group_add_option)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群搜索 · set_group_search (/en/docs/group-admin/set_group_search)
+
+(see live page for OpenAPI specification)
+
+
+# 设置 / 取消管理员 · set_group_admin (/en/docs/group-admin/set_group_admin)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群名片 · set_group_card (/en/docs/group-admin/set_group_card)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群名 · set_group_name (/en/docs/group-admin/set_group_name)
+
+(see live page for OpenAPI specification)
+
+
+# 退群 / 解散群 · set_group_leave (/en/docs/group-admin/set_group_leave)
+
+(see live page for OpenAPI specification)
+
+
+# 设置专属头衔 · set_group_special_title (/en/docs/group-admin/set_group_special_title)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 群匿名开关 · set_group_anonymous (/en/docs/group-admin/set_group_anonymous)
+
+(see live page for OpenAPI specification)
+
+
+# [占位] 禁言匿名用户 · set_group_anonymous_ban (/en/docs/group-admin/set_group_anonymous_ban)
+
+(see live page for OpenAPI specification)
+
+
+# 设置群头像 · set_group_portrait (/en/docs/group-admin/set_group_portrait)
+
+(see live page for OpenAPI specification)
+
+
+# 上传群文件 · upload_group_file (/en/docs/group-file/upload_group_file)
+
+(see live page for OpenAPI specification)
+
+
+# 上传私聊文件 · upload_private_file (/en/docs/group-file/upload_private_file)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群文件下载链接 · get_group_file_url (/en/docs/group-file/get_group_file_url)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群根目录文件 · get_group_root_files (/en/docs/group-file/get_group_root_files)
+
+(see live page for OpenAPI specification)
+
+
+# 获取指定文件夹文件 · get_group_files_by_folder (/en/docs/group-file/get_group_files_by_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群文件 · delete_group_file (/en/docs/group-file/delete_group_file)
+
+(see live page for OpenAPI specification)
+
+
+# 移动群文件 · move_group_file (/en/docs/group-file/move_group_file)
+
+(see live page for OpenAPI specification)
+
+
+# 创建群文件夹 · create_group_file_folder (/en/docs/group-file/create_group_file_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 删除群文件夹 · delete_group_file_folder (/en/docs/group-file/delete_group_file_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 重命名群文件夹 · rename_group_file_folder (/en/docs/group-file/rename_group_file_folder)
+
+(see live page for OpenAPI specification)
+
+
+# 获取私聊文件下载链接 · get_private_file_url (/en/docs/group-file/get_private_file_url)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群列表 · get_group_list (/en/docs/group-info/get_group_list)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群信息 · get_group_info (/en/docs/group-info/get_group_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群成员列表 · get_group_member_list (/en/docs/group-info/get_group_member_list)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群成员信息 · get_group_member_info (/en/docs/group-info/get_group_member_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取群荣誉信息 · get_group_honor_info (/en/docs/group-info/get_group_honor_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取入群请求 · get_group_system_msg (/en/docs/group-info/get_group_system_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取登录信息 · get_login_info (/en/docs/system/get_login_info)
+
+(see live page for OpenAPI specification)
+
+
+# 获取运行状态 · get_status (/en/docs/system/get_status)
+
+(see live page for OpenAPI specification)
+
+
+# 获取版本信息 · get_version_info (/en/docs/system/get_version_info)
+
+(see live page for OpenAPI specification)
+
+
+# 是否可发图片 · can_send_image (/en/docs/system/can_send_image)
+
+(see live page for OpenAPI specification)
+
+
+# 是否可发语音 · can_send_record (/en/docs/system/can_send_record)
+
+(see live page for OpenAPI specification)
+
+
+# 发送消息 · send_msg (/en/docs/message/send_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送私聊消息 · send_private_msg (/en/docs/message/send_private_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 发送群消息 · send_group_msg (/en/docs/message/send_group_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 获取消息 · get_msg (/en/docs/message/get_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 撤回消息 · delete_msg (/en/docs/message/delete_msg)
+
+(see live page for OpenAPI specification)
+
+
+# 处理好友申请 · set_friend_add_request (/en/docs/request/set_friend_add_request)
+
+(see live page for OpenAPI specification)
+
+
+# 处理加群请求 · set_group_add_request (/en/docs/request/set_group_add_request)
+
+(see live page for OpenAPI specification)

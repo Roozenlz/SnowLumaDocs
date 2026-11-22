@@ -1,0 +1,88 @@
+# 介绍 (/zh/docs)
+
+
+
+SnowLuma 是一个高性能的下一代远程协议框架，旨在桥接 NTQQ 协议与 OneBot 生态系统，为机器人开发提供结构化的 API。
+
+## 你可以用它做什么 [#你可以用它做什么]
+
+* **接入 OneBot v11**：HTTP / WebSocket / 反向 WebSocket / HTTP 上报四种适配器。
+* **桥接 NTQQ**：通过 Hook 捕获并解析 NTQQ 数据包，再转换为上层事件 / 动作。
+* **多账号会话**：每个 UIN 一个独立 OneBot 实例，配置可继承全局或单独覆盖。
+* **内置 WebUI**：完整构建启动后可访问 Web 控制台查看状态、管理网络适配器、暂存并安装更新。
+* **TypeScript SDK / MCP**：`@snowluma/sdk` 提供类型完备的 OneBot 客户端，`@snowluma/mcp` 把同一套 action 暴露给 agent。
+
+## 运行环境 [#运行环境]
+
+| 项               | 要求                                                     |
+| --------------- | ------------------------------------------------------ |
+| Windows / macOS | 原生运行，需要自备 Node.js                                      |
+| Linux           | 只通过 [Docker 容器](/docs/docker) 运行（镜像内置 QQ + Xvfb + VNC） |
+| Node.js         | `^24.22.1` 或 `>=26.12.1`（完整发行包已内置）                     |
+| QQ              | NTQQ 有界面客户端                                            |
+
+## 两种用法 [#两种用法]
+
+| 场景       | 推荐方式                                                                                        |
+| -------- | ------------------------------------------------------------------------------------------- |
+| 部署到服务器   | [Docker 容器](/docs/docker) —— 镜像内置 QQ + Xvfb + VNC，开箱即用                                      |
+| 本机使用预发行版 | 从 [GitHub Releases](https://github.com/Roozenlz/SnowLuma/releases) 下载对应平台的 tarball，解压后运行启动器 |
+
+## 发行包命名 [#发行包命名]
+
+每个 tag 会发布三类产物，覆盖 Windows x64、Linux x64 与 Linux arm64：
+
+| 文件名                                 | 说明                                       |
+| ----------------------------------- | ---------------------------------------- |
+| `SnowLuma-<TAG>-win-x64.zip`        | Windows 完整版，内置 Node.js，解压即可运行            |
+| `SnowLuma-<TAG>-linux-x64.tar.gz`   | Linux x64 完整版                            |
+| `SnowLuma-<TAG>-linux-arm64.tar.gz` | Linux arm64 完整版                          |
+| `...-lite.zip` / `...-lite.tar.gz`  | 不含 Node.js，需要自备 `^24.22.1` 或 `>=26.12.1` |
+
+完整版适合直接解压运行；Lite 版体积小很多，适合容器或已装 Node 的机器。
+
+## 发行目录 [#发行目录]
+
+`pnpm build:all` 产物输出到仓库根目录 `dist/`：
+
+```text
+dist/
+├─ index.mjs            # 主入口
+├─ launcher.bat         # Windows 启动器
+├─ launcher.sh          # Linux 启动器
+├─ package.json
+├─ release.json         # 发行清单（版本、平台、文件列表）
+├─ webui/               # 内置 WebUI 静态资源
+└─ native/              # 平台原生产物
+   ├─ snowluma-<platform>-<arch>.node
+   ├─ snowluma-<platform>-<arch>.so / .dll
+   └─ websocket-<platform>-<arch>.node
+```
+
+解压后 Windows 跑 `launcher.bat`，Linux 跑 `./launcher.sh`。
+
+## 快速开始 [#快速开始]
+
+1. 解压与系统架构匹配的压缩包。
+2. 启动后浏览器访问 `http://localhost:5099`。
+3. 用启动日志里的初始账号登录 WebUI，按引导接入 QQ 进程并配置 OneBot 连接。
+
+无人值守部署可以同时设置 `SNOWLUMA_ACCEPT_EULA=1` 与 `SNOWLUMA_ACCEPT_PRIVACY=1` 完成协议确认；缺任意一项仍会显示同意页面。
+
+## 默认服务 [#默认服务]
+
+首次启动 OneBot 实例时，SnowLuma 会自动创建 `config/onebot.json`、`config/onebot_<uin>.json` 和 `config/runtime.json`。
+
+| 服务               | 默认地址                   | 配置项                           |
+| ---------------- | ---------------------- | ----------------------------- |
+| OneBot HTTP      | `http://0.0.0.0:3000/` | `networks.httpServers[].port` |
+| OneBot WebSocket | `ws://0.0.0.0:3001/`   | `networks.wsServers[].port`   |
+| WebUI            | `http://0.0.0.0:5099/` | `runtime.json` 的 `webuiPort`  |
+
+详细字段说明见 [配置参考](/docs/configuration)。
+
+## 使用边界 [#使用边界]
+
+SnowLuma 使用**源码可见非商业许可**，不是 OSI 开源许可。源码可用于查看、学习、非商业自托管及私下修改；商业使用，以及公开发布修改版或衍生版，均需事先取得书面授权。二进制发行包另受 EULA 与隐私政策约束。
+
+SnowLuma 是独立的第三方项目，与腾讯 / QQ 无隶属或授权关系。项目仅供学习与技术研究，请遵守 QQ 用户协议及适用法律；软件按「现状」提供，使用风险自负。
