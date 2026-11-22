@@ -112,7 +112,7 @@ services:
       SNOWLUMA_WEBUI_HOST: ${SNOWLUMA_WEBUI_HOST:-0.0.0.0}
       SNOWLUMA_WEBUI_PORT: ${SNOWLUMA_WEBUI_PORT:-5099}
       SNOWLUMA_LOG_LEVEL: ${SNOWLUMA_LOG_LEVEL:-info}
-      SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x16}
+      SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x24}
       SNOWLUMA_HOOK_AUTOLOAD: ${SNOWLUMA_HOOK_AUTOLOAD:-1}
     ports:
       - "${VNC_PORT:-5900}:5900"
@@ -160,8 +160,10 @@ SNOWLUMA_IMAGE=roozen/snowluma:v2.4.3
 | `SNOWLUMA_WEBUI_HOST` | `0.0.0.0` | WebUI 绑定地址。程序本身默认只监听 `127.0.0.1`，镜像通过这个变量放开，否则端口映射进不来。 |
 | `SNOWLUMA_WEBUI_PORT` | `5099` | WebUI 监听端口（容器内）。 |
 | `SNOWLUMA_LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug`。 |
-| `SNOWLUMA_SCREEN` | `1920x1080x16` | Xvfb 分辨率 + 色深。 |
+| `SNOWLUMA_SCREEN` | `1920x1080x24` | Xvfb 分辨率 + 色深。 |
 | `SNOWLUMA_HOOK_AUTOLOAD` | `1` | 镜像默认开自动注入。设 `0` 切回手动 Load 流程。 |
+| `SNOWLUMA_QQ_FLAGS` | 空 | 追加给 QQ 的启动参数，空格分隔。无 GPU 环境可设 `--disable-gpu --disable-software-rasterizer` 省内存。 |
+| `SNOWLUMA_EXTRA_QQ_HOMES` | 空 | 额外的 QQ 账号 `HOME` 目录，逗号或空格分隔；每个目录由 supervisord 单独托管。见[多开 QQ](#多开-qq多账号)。 |
 
 环境变量优先级高于 `runtime.json`，所以 Docker 用环境变量覆盖最方便。
 
@@ -203,40 +205,25 @@ docker logs snowluma 2>&1 | \
 
 ## 多开 QQ（多账号）
 
-Linux QQ 自带单实例锁：在已有 QQ 跑着的桌面里直接再点一次 QQ 图标，只会把已有窗口聚焦，**起不来第二个进程**。锁文件落在 `$HOME/.config/QQ/SingletonLock`，所以解法是给第二个实例一个**独立的 `HOME`**。
+Linux QQ 自带单实例锁：在已有 QQ 跑着的桌面里直接再点一次 QQ 图标，只会把已有窗口聚焦，**起不来第二个进程**。锁文件落在 `$HOME/.config/QQ/SingletonLock`，所以每个实例必须有自己的 `HOME`。
 
 SnowLuma 一侧不需要任何额外配置：[HookManager](https://github.com/Roozenlz/SnowLuma/blob/main/packages/bridge/src/hook-manager.ts) 会遍历所有 QQ 主进程，新启动一个就自动注入一个，每个 UIN 拉一个独立 `OneBotInstance`，配置存到对应的 `config/onebot_<uin>.json`。
 
-### 在 noVNC 桌面里启第二个 QQ
+### 用 `SNOWLUMA_EXTRA_QQ_HOMES` 声明（推荐）
 
-1. 在 noVNC 桌面里打开终端（任务栏右键 / 用 `xterm` / 按容器内任意终端快捷键）。
-2. 用独立 `HOME` 起新 QQ：
-
-   ```bash
-   mkdir -p /app/qq-acct2
-   HOME=/app/qq-acct2 qq --no-sandbox &
-   disown
-   ```
-
-3. 一个新 QQ 登录窗口会出现，扫码 / 账密登录另一个号即可。
-4. 登录完成后 SnowLuma 自动注入并按新 UIN 起一个 OneBot 实例。
-
-`disown` 让 QQ 与终端解绑 —— 关掉终端窗口 QQ 不会跟着退出。
-
-### 让它持久化
-
-上面那条命令里 `/app/qq-acct2` 是容器内路径，**容器重建会丢**。要持久化，在 `docker-compose.yml` 给每个账号加独立卷：
+把额外的 `HOME` 目录写进变量即可，每个目录会由 supervisord 单独托管一个 QQ 进程——崩溃后**只重启那一个账号**，不会连累其他号：
 
 ```yaml
 services:
   snowluma:
-    # ... 原有配置 ...
+    environment:
+      SNOWLUMA_EXTRA_QQ_HOMES: /app/qq-acct2,/app/qq-acct3
     volumes:
       - snowluma-data:/app/snowluma-data
-      - snowluma-qq-config:/app/.config         # 主账号
-      - snowluma-qq-data:/app/.local/share      # 主账号
-      - snowluma-qq2:/app/qq-acct2              # 第二个账号的完整 HOME
-      - snowluma-qq3:/app/qq-acct3              # 第三个账号 ...
+      - snowluma-qq-config:/app/.config
+      - snowluma-qq-data:/app/.local/share
+      - snowluma-qq2:/app/qq-acct2     # 第二个账号的完整 HOME
+      - snowluma-qq3:/app/qq-acct3     # 第三个账号
 
 volumes:
   snowluma-data:
@@ -246,26 +233,39 @@ volumes:
   snowluma-qq3:
 ```
 
-之后每次需要拉起第二个号，在 noVNC 终端跑：
+路径用逗号或空格分隔。开头的 `/app`（主账号）会被自动跳过，重复路径和相对路径会被忽略并在日志里给出提示。目录不存在时会在启动阶段自动创建。
+
+启动后 `docker logs snowluma` 会打印类似：
+
+```text
+supervisord: 3 QQ program(s), no extra flags, config: /etc/supervisord.run.conf
+```
+
+每个账号对应一个 `[program:qq-<目录名>]`，可用 `supervisorctl status` 单独查看：
 
 ```bash
-HOME=/app/qq-acct2 qq --no-sandbox &
+docker exec snowluma supervisorctl status
+# qq                       RUNNING
+# qq-qq-acct2              RUNNING
+# qq-qq-acct3              RUNNING
+# snowluma                 RUNNING
+```
+
+<Callout type="info">
+**别忘了挂卷。** 只声明了 `SNOWLUMA_EXTRA_QQ_HOMES` 而没给对应目录挂卷时，账号能正常登录，但容器重建后登录态会丢。
+</Callout>
+
+### 手动在 noVNC 桌面里启（临时用）
+
+只想临时开一个号、不写进 compose 时，在 noVNC 桌面终端里：
+
+```bash
+mkdir -p /app/qq-temp
+HOME=/app/qq-temp qq --no-sandbox &
 disown
 ```
 
-### 开机自动拉所有账号
-
-把上面的命令写成一个 shell 脚本，放进持久卷 `/app/snowluma-data/start-extra-qq.sh`：
-
-```bash
-#!/bin/sh
-for home in /app/qq-acct2 /app/qq-acct3; do
-  [ -d "$home" ] || continue
-  HOME="$home" qq --no-sandbox >/dev/null 2>&1 &
-done
-```
-
-然后在 noVNC 桌面进系统的开机自启目录（XFCE 是 `~/.config/autostart/`）放一个 desktop 入口指向这个脚本。或者更稳的：把脚本加到 `supervisord.conf` 作为新的 program。后者需要重建镜像，前者重启容器就生效。
+`disown` 让 QQ 与终端解绑——关掉终端窗口 QQ 不会跟着退出。这种方式不会自动重启，容器重启后需要重来。
 
 ### 限制 & 注意
 
@@ -273,6 +273,7 @@ done
 - **资源**：每个 QQ 进程跑 Chromium 大概吃 300-500MB 内存，`--shm-size` 主账号 1GB 够用，多开建议加到 `2gb` 或更高。
 - **noVNC 同屏可见**：多个 QQ 窗口都在同一个 Xvfb 桌面里，VNC 进去可以分别操作。如果只想登一次就走，登完后把 QQ 窗口最小化即可，不会影响 hook。
 - **WebUI 自动列出所有 UIN**：SnowLuma 不需要单独配置就能识别新登录的账号，WebUI / `get_login_info` 都会出现新 UIN。
+
 
 ## 自动注入
 
@@ -397,7 +398,3 @@ docker buildx build \
 ```
 
 ## 安全提示
-
-- SnowLuma 用 native addon 把代码注入 QQ 进程；容器启动需要 `SYS_PTRACE` 能力和 `seccomp=unconfined`。仅在受信任的宿主上运行。
-- VNC / noVNC 默认密码 `vncpasswd` **务必改掉**，否则你的 QQ 桌面在公网上裸奔。
-- 请遵守 NTQQ / Tencent 的使用许可，以及 SnowLuma 与依赖项的开源协议。
