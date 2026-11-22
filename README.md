@@ -1,6 +1,6 @@
 # SnowLumaDocs
 
-[Fork 的 SnowLuma 文档站](https://snowluma-doc.roozen.top/)。基于 [Fumadocs](https://fumadocs.dev)（Next.js 16 + MDX）。
+[SnowLuma 文档站](https://snowluma-doc.roozen.top/)，服务于 [Roozenlz/SnowLuma](https://github.com/Roozenlz/SnowLuma)。基于 [Fumadocs](https://fumadocs.dev)（Next.js 16 + MDX）。
 
 ## 本地开发
 

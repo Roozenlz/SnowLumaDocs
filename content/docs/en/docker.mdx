@@ -5,18 +5,29 @@ description: Run SnowLuma on Linux with the official Docker image
 
 On Linux, SnowLuma runs **only via Docker**. The image bundles Linux QQ + Xvfb + VNC + noVNC + supervisord + the SnowLuma `lite` distribution, so the host needs nothing beyond Docker.
 
-The image build scripts and Compose template live in a separate repo: [`SnowLuma/SnowLuma.Docker.Framework`](https://github.com/SnowLuma/SnowLuma.Docker.Framework).
+The build inputs (`Dockerfile`, `start.sh`, `supervisord.conf`, `docker-compose.yml`) live in the main repo's [`docker/`](https://github.com/Roozenlz/SnowLuma/tree/main/docker) directory, and the build runs in that repo's own GitHub Actions — no external repository involved.
 
 ## Image
 
 | Item | Value |
 | --- | --- |
-| Image | `motricseven7/snowluma:latest` (or a specific tag, e.g. `:v1.8.0`) |
+| Image | `roozen/snowluma:latest` (or a specific tag, e.g. `:v2.4.3`) |
 | Arch | `linux/amd64`, `linux/arm64` |
 | Base | `node:22-bookworm-slim` |
 | Bundled | Linux QQ, Xvfb, VNC, noVNC, supervisord, SnowLuma `lite` |
 
-The image does **not** rebuild SnowLuma — it consumes the prebuilt `lite` tarball from each SnowLuma GitHub Release, so the release and the image build are decoupled.
+The image does **not** rebuild SnowLuma — it consumes the prebuilt `lite` tarball from each GitHub Release, so the release and the image build are decoupled.
+
+### Tag policy
+
+| Tag | Published by | Notes |
+| --- | --- | --- |
+| `latest` | `release.yml` | Moves only with **stable** tags (no `-` in the tag name); always the newest formal release. |
+| `v2.4.3` | `release.yml` | One per tag, matching the GitHub Release 1:1. |
+| `dev` | `dev-build.yml` | Rolling rebuild on every push to `dev`; `linux/amd64` only. |
+| `dev-<sha>` | `dev-build.yml` | Immutable snapshot of the same build, for pinning and rollback. |
+
+Treat `dev` images as integration builds, not production deployments.
 
 ## Ports
 
@@ -70,7 +81,7 @@ docker run -d \
   -v snowluma-data:/app/snowluma-data \
   -v snowluma-qq-config:/app/.config \
   -v snowluma-qq-data:/app/.local/share \
-  motricseven7/snowluma:latest
+  roozen/snowluma:latest
 ```
 
 <Callout type="warn">
@@ -81,12 +92,12 @@ docker run -d \
 
 ## docker-compose
 
-Recommended over `docker run`. The repo's `docker-compose.yml`:
+Recommended over `docker run`. The main repo already ships [`docker/docker-compose.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/docker/docker-compose.yml) — use it as-is.
 
 ```yaml
 services:
   snowluma:
-    image: ${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
+    image: ${SNOWLUMA_IMAGE:-roozen/snowluma:latest}
     container_name: ${SNOWLUMA_CONTAINER:-snowluma}
     restart: unless-stopped
     shm_size: 1gb
@@ -98,6 +109,7 @@ services:
       VNC_PASSWD: ${VNC_PASSWD:-vncpasswd}
       SNOWLUMA_UID: ${SNOWLUMA_UID:-1000}
       SNOWLUMA_GID: ${SNOWLUMA_GID:-1000}
+      SNOWLUMA_WEBUI_HOST: ${SNOWLUMA_WEBUI_HOST:-0.0.0.0}
       SNOWLUMA_WEBUI_PORT: ${SNOWLUMA_WEBUI_PORT:-5099}
       SNOWLUMA_LOG_LEVEL: ${SNOWLUMA_LOG_LEVEL:-info}
       SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x16}
@@ -119,17 +131,23 @@ volumes:
   snowluma-qq-data:
 ```
 
-Start:
+Start (from the repo root):
 
 ```bash
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 Upgrade:
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose -f docker/docker-compose.yml pull
+docker compose -f docker/docker-compose.yml up -d
+```
+
+To track one specific version, pin it in `.env`:
+
+```bash
+SNOWLUMA_IMAGE=roozen/snowluma:v2.4.3
 ```
 
 ## Environment variables
@@ -139,6 +157,7 @@ docker compose up -d
 | `VNC_PASSWD` | `vncpasswd` | VNC / noVNC login password. **Change this**, otherwise anyone can see your QQ desktop. |
 | `SNOWLUMA_UID` | `1000` | uid of the in-container `snowluma` user. Match it to the host owner of your mounted volumes. |
 | `SNOWLUMA_GID` | `1000` | gid of the in-container `snowluma` user. |
+| `SNOWLUMA_WEBUI_HOST` | `0.0.0.0` | WebUI bind address. The binary itself binds loopback only; the image opens it up, otherwise the published port can't reach it. |
 | `SNOWLUMA_WEBUI_PORT` | `5099` | WebUI listen port (inside the container). |
 | `SNOWLUMA_LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug`. |
 | `SNOWLUMA_SCREEN` | `1920x1080x16` | Xvfb resolution + color depth. |
@@ -186,7 +205,7 @@ The bootstrap password is logged **only on a brand-new data volume's first boot*
 
 Linux QQ ships a single-instance lock — clicking the QQ icon again on a desktop that already has one running just focuses the existing window, it doesn't start a second process. The lock file lives at `$HOME/.config/QQ/SingletonLock`, so the solution is to give each instance its **own `HOME`**.
 
-SnowLuma needs no extra configuration: [HookManager](https://github.com/SnowLuma/SnowLuma/blob/main/packages/core/src/hook/hook-manager.ts) walks every QQ main process it can find, injects the hook into each, and spins up a separate `OneBotInstance` per UIN with its own `config/onebot_<uin>.json`.
+SnowLuma needs no extra configuration: [HookManager](https://github.com/Roozenlz/SnowLuma/blob/main/packages/bridge/src/hook-manager.ts) walks every QQ main process it can find, injects the hook into each, and spins up a separate `OneBotInstance` per UIN with its own `config/onebot_<uin>.json`.
 
 ### Launch a second QQ from the noVNC desktop
 
@@ -264,7 +283,7 @@ The image defaults to `SNOWLUMA_HOOK_AUTOLOAD=1`: when the container starts, the
 If you prefer the legacy "manual Load via WebUI" workflow:
 
 ```bash
-docker run -e SNOWLUMA_HOOK_AUTOLOAD=0 ... motricseven7/snowluma:latest
+docker run -e SNOWLUMA_HOOK_AUTOLOAD=0 ... roozen/snowluma:latest
 ```
 
 Or set `SNOWLUMA_HOOK_AUTOLOAD: 0` in `docker-compose.yml`, or edit `/app/snowluma-data/config/runtime.json` inside the volume to `"hookAutoLoad": false`. Environment variables win.
@@ -314,32 +333,69 @@ ports:
 Or via env (the Compose template already supports it):
 
 ```bash
-ONEBOT_HTTP_PORT=8080 docker compose up -d
+ONEBOT_HTTP_PORT=8080 docker compose -f docker/docker-compose.yml up -d
 ```
 
 ## Building the image yourself
 
-Useful when you need an unreleased SnowLuma build:
+The build context is the main repo's `docker/` directory; the Dockerfile reads `SnowLuma.Framework.tar.gz` from it.
+
+### From a published release
 
 ```bash
-# Build the lite tarball in the SnowLuma main repo
+git clone --depth 1 https://github.com/Roozenlz/SnowLuma.git
+cd SnowLuma
+
+TAG=v2.4.3
+gh release download "$TAG" \
+  --pattern "SnowLuma-$TAG-linux-x64-lite.tar.gz" \
+  --output docker/SnowLuma.Framework.tar.gz --clobber
+
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag roozen/snowluma:$TAG docker --load
+```
+
+### From a local build
+
+```bash
+pnpm install --frozen-lockfile
 pnpm build:all
 
-# Drop it into the Docker repo root with the expected name
-cp dist/SnowLuma-*-linux-x64-lite.tar.gz \
-   ../SnowLuma.Docker.Framework/SnowLuma.Framework.tar.gz
-
-cd ../SnowLuma.Docker.Framework
-./scripts/build-image.sh
+tar -czf docker/SnowLuma.Framework.tar.gz -C dist .
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag snowluma:local docker --load
 ```
 
-Or let the script pull the latest release:
+`dist/` must contain the complete runtime layout (`index.mjs`, `native/`, `webui/`, `package.json`, …); `pnpm build:all` produces exactly that.
+
+### Multi-arch
+
+A local `buildx build` can only `--load` one platform at a time. For a merged amd64 + arm64 manifest, let CI do it:
+
+- **On release**: [`release.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/.github/workflows/release.yml) calls the shared `docker-image.yml` after the Release is published.
+- **Rebuild a historical tag**: run [Rebuild Docker Image](https://github.com/Roozenlz/SnowLuma/actions/workflows/dispatch-docker-release.yml) manually with `snowluma_tag` — no need to re-tag.
+
+### The QQ build baked into the image
+
+The Dockerfile downloads the Linux QQ `.deb` from Tencent's CDN, pinned by three build args:
+
+```dockerfile
+ARG QQ_VERSION=3.2.35-54395
+ARG QQ_CHANNEL=9.9.37/beta
+ARG QQ_HASH=816b3c79
+```
+
+Tencent rotates both the channel directory and the content hash on every release, so stale values 404 immediately. When the build log shows `Unable to download linuxqq_*.deb`, grab the new triple from the [linuxqq PKGBUILD on AUR](https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=linuxqq) and override it:
 
 ```bash
-SNOWLUMA_TAG=v1.8.0 ./scripts/build-image.sh
+docker buildx build \
+  --build-arg QQ_VERSION=3.2.36-xxxxx \
+  --build-arg QQ_CHANNEL=9.9.38/beta \
+  --build-arg QQ_HASH=xxxxxxxx \
+  --file docker/Dockerfile --tag roozen/snowluma:test docker
 ```
-
-Multi-arch manifests are merged by CI (`.github/workflows/docker-image.yml`); the local script only builds a single platform.
 
 ## Security notes
 

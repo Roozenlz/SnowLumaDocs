@@ -124,29 +124,55 @@ config/onebot_<uin>.json    # 账号级覆盖
 
 ## 运行时配置（`runtime.json`）
 
-`config/runtime.json` 记录 SnowLuma 进程级设置，**不分账号**。
+`config/runtime.json` 记录 SnowLuma 进程级设置，**不分账号**。文件缺失或字段不全时，加载会自动补齐并回写。
 
 ```json
 {
   "webuiPort": 5099,
-  "hookAutoLoad": false
+  "webuiHost": "127.0.0.1",
+  "hookAutoLoad": false,
+  "webuiTls": { "enabled": false },
+  "trustProxy": "",
+  "logMaxTotalMb": 1024,
+  "logRetainDays": 7,
+  "logPerUin": false
 }
 ```
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `webuiPort` | number | `5099` | WebUI 监听端口；超出 `1-65535` 会被回退到默认。 |
-| `hookAutoLoad` | bool | `false` | 是否自动把 Hook 注入到新发现的 QQ 进程。Docker 镜像默认开启。 |
+| `webuiPort` | number | `5099` | WebUI 监听端口；非 `1..65535` 的整数会被回退到默认值。 |
+| `webuiHost` | string | `127.0.0.1` | WebUI 绑定地址。**默认只监听本机**，要从别的机器访问必须改成 `0.0.0.0`。属于监听器设置，改动需重启。 |
+| `hookAutoLoad` | bool | `false` | 是否自动把 Hook 注入到新发现的 QQ 进程。Docker 镜像通过 `supervisord.conf` 打开。 |
+| `webuiTls.enabled` | bool | `false` | 用 `config/cert.pem` + `config/key.pem` 起 HTTPS。属于监听器设置，改动需重启。 |
+| `trustProxy` | string | `""` | 信任的反向代理来源，决定 WebUI 如何解析客户端 IP；空串表示谁都不信。 |
+| `logMaxTotalMb` | number | `1024` | 日志根目录下所有文件的合计容量上限。 |
+| `logRetainDays` | number | `7` | 按自然日保留天数；`0` 关闭按日期清理。 |
+| `logPerUin` | bool | `false` | 除共享日志外，再把带 UIN 的日志行复制到 `logs/<uin>/`。 |
+
+<Callout type="warn">
+**`webuiHost` 默认是 `127.0.0.1`**，只监听本机。Docker 用户请用 `SNOWLUMA_WEBUI_HOST=0.0.0.0` 覆盖（镜像的端口映射需要它才能从宿主机访问）。
+</Callout>
 
 ## 环境变量
 
-| 变量 | 说明 |
-| --- | --- |
-| `SNOWLUMA_HOOK_AUTOLOAD` | `1` / `true` 强制开启自动注入；`0` / `false` 关闭。**优先级高于 `runtime.json`**，方便在 Docker 里覆盖。 |
-| `SNOWLUMA_LOG_LEVEL` | 设置日志级别（`error` / `warn` / `info` / `debug`）。 |
-| `SNOWLUMA_VERBOSE_WARMUP=1` | 输出更详细的好友、群、群成员预热日志。 |
-| `SNOWLUMA_DEV_MODE=1` | 启用开发模式（WebUI 鉴权放宽，便于本地调试）。 |
-| `SNOWLUMA_DEV_WEBUI=1` | 在 dev mode 下强制启用内置 WebUI。 |
+环境变量**优先于** `runtime.json`，并且只作用于内存，不会被写回磁盘——适合 Docker 或启动器按次覆盖。
+
+| 变量 | 对应字段 | 说明 |
+| --- | --- | --- |
+| `SNOWLUMA_WEBUI_PORT` | `webuiPort` | WebUI 监听端口。 |
+| `SNOWLUMA_WEBUI_HOST` | `webuiHost` | WebUI 绑定地址；Docker 里设 `0.0.0.0`。 |
+| `SNOWLUMA_WEBUI_TLS` | `webuiTls.enabled` | `1` / `true` 起 HTTPS，`0` / `false` 关闭。 |
+| `SNOWLUMA_WEBUI_TRUST_PROXY` | `trustProxy` | 信任的反向代理来源；写 `0` / `off` 表示谁都不信。 |
+| `SNOWLUMA_LOG_MAX_TOTAL_MB` | `logMaxTotalMb` | 日志容量上限。 |
+| `SNOWLUMA_LOG_RETAIN_DAYS` | `logRetainDays` | 日志保留天数。 |
+| `SNOWLUMA_LOG_PER_UIN` | `logPerUin` | 是否按 UIN 分目录。 |
+| `SNOWLUMA_HOOK_AUTOLOAD` | `hookAutoLoad` | `1` / `true` 强制开启自动注入；`0` / `false` 关闭。 |
+| `SNOWLUMA_LOG_LEVEL` | — | 日志级别：`error` / `warn` / `info` / `debug`。 |
+| `SNOWLUMA_VERBOSE_WARMUP` | — | 设为 `1` 输出更详细的好友、群、群成员预热日志。 |
+| `SNOWLUMA_DEV_MODE` | — | 设为 `1` 启用开发模式（WebUI 鉴权放宽，仅本地调试用）。 |
+| `SNOWLUMA_DEV_WEBUI` | — | 设为 `1` 在 dev mode 下强制启用内置 WebUI。 |
+| `SNOWLUMA_ACCEPT_EULA` / `SNOWLUMA_ACCEPT_PRIVACY` | — | 都设为 `1` 时跳过首次启动的协议确认页面，供无人值守部署使用。 |
 
 ## 端口冲突
 

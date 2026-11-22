@@ -5,18 +5,29 @@ description: 在 Linux 上用官方 Docker 镜像运行 SnowLuma
 
 SnowLuma 在 Linux 上**只通过 Docker 运行**。镜像内置 Linux QQ + Xvfb + VNC + noVNC + supervisord，开箱即用；宿主机只需要 Docker。
 
-镜像构建脚本与 Compose 模板在独立仓库 [`SnowLuma/SnowLuma.Docker.Framework`](https://github.com/SnowLuma/SnowLuma.Docker.Framework)。
+镜像的构建材料（`Dockerfile`、`start.sh`、`supervisord.conf`、`docker-compose.yml`）就在主仓的 [`docker/`](https://github.com/Roozenlz/SnowLuma/tree/main/docker) 目录里，构建与发布由主仓自己的 GitHub Actions 完成，不依赖任何外部仓库。
 
 ## 镜像信息
 
 | 项 | 值 |
 | --- | --- |
-| 镜像 | `motricseven7/snowluma:latest` (或具体 tag `:v1.8.0`) |
+| 镜像 | `roozen/snowluma:latest`（或具体 tag，如 `:v2.4.3`） |
 | 架构 | `linux/amd64`、`linux/arm64` |
 | 基础 | `node:22-bookworm-slim` |
 | 内置 | Linux QQ、Xvfb、VNC、noVNC、supervisord、SnowLuma `lite` 发行包 |
 
 镜像不在容器内重新编译 SnowLuma —— 它消费主仓 GitHub Release 的预编译 `lite` tarball，所以发版与镜像构建解耦。
+
+### 标签策略
+
+| 标签 | 由谁发布 | 说明 |
+| --- | --- | --- |
+| `latest` | `release.yml` | 只随**稳定版**（tag 不含 `-`）移动，始终指向最新的正式版本。 |
+| `v2.4.3` | `release.yml` | 每个 tag 一个，与 GitHub Release 一一对应。 |
+| `dev` | `dev-build.yml` | `dev` 分支每次推送滚动更新，只构建 `linux/amd64`。 |
+| `dev-<sha>` | `dev-build.yml` | 同一份构建的不可变快照，便于回滚定位。 |
+
+`dev` 镜像只用于联调，不要用在生产环境。
 
 ## 端口
 
@@ -70,7 +81,7 @@ docker run -d \
   -v snowluma-data:/app/snowluma-data \
   -v snowluma-qq-config:/app/.config \
   -v snowluma-qq-data:/app/.local/share \
-  motricseven7/snowluma:latest
+  roozen/snowluma:latest
 ```
 
 <Callout type="warn">
@@ -81,12 +92,12 @@ docker run -d \
 
 ## docker-compose
 
-更推荐用 Compose。仓库 `docker-compose.yml`：
+更推荐用 Compose。主仓 [`docker/docker-compose.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/docker/docker-compose.yml) 已经写好，直接拉下来用即可。
 
 ```yaml
 services:
   snowluma:
-    image: ${SNOWLUMA_IMAGE:-motricseven7/snowluma:latest}
+    image: ${SNOWLUMA_IMAGE:-roozen/snowluma:latest}
     container_name: ${SNOWLUMA_CONTAINER:-snowluma}
     restart: unless-stopped
     shm_size: 1gb
@@ -98,6 +109,7 @@ services:
       VNC_PASSWD: ${VNC_PASSWD:-vncpasswd}
       SNOWLUMA_UID: ${SNOWLUMA_UID:-1000}
       SNOWLUMA_GID: ${SNOWLUMA_GID:-1000}
+      SNOWLUMA_WEBUI_HOST: ${SNOWLUMA_WEBUI_HOST:-0.0.0.0}
       SNOWLUMA_WEBUI_PORT: ${SNOWLUMA_WEBUI_PORT:-5099}
       SNOWLUMA_LOG_LEVEL: ${SNOWLUMA_LOG_LEVEL:-info}
       SNOWLUMA_SCREEN: ${SNOWLUMA_SCREEN:-1920x1080x16}
@@ -119,17 +131,23 @@ volumes:
   snowluma-qq-data:
 ```
 
-启动：
+启动（在仓库根目录执行）：
 
 ```bash
-docker compose up -d
+docker compose -f docker/docker-compose.yml up -d
 ```
 
 升级镜像：
 
 ```bash
-docker compose pull
-docker compose up -d
+docker compose -f docker/docker-compose.yml pull
+docker compose -f docker/docker-compose.yml up -d
+```
+
+只想跟着某个具体版本走的，在 `.env` 里固定：
+
+```bash
+SNOWLUMA_IMAGE=roozen/snowluma:v2.4.3
 ```
 
 ## 环境变量
@@ -139,6 +157,7 @@ docker compose up -d
 | `VNC_PASSWD` | `vncpasswd` | VNC / noVNC 登录密码。**改成自己的**，不然别人也能进容器里看你 QQ。 |
 | `SNOWLUMA_UID` | `1000` | 容器内 `snowluma` 用户的 uid。和你挂载卷的宿主属主匹配。 |
 | `SNOWLUMA_GID` | `1000` | 容器内 `snowluma` 用户的 gid。 |
+| `SNOWLUMA_WEBUI_HOST` | `0.0.0.0` | WebUI 绑定地址。程序本身默认只监听 `127.0.0.1`，镜像通过这个变量放开，否则端口映射进不来。 |
 | `SNOWLUMA_WEBUI_PORT` | `5099` | WebUI 监听端口（容器内）。 |
 | `SNOWLUMA_LOG_LEVEL` | `info` | `error` / `warn` / `info` / `debug`。 |
 | `SNOWLUMA_SCREEN` | `1920x1080x16` | Xvfb 分辨率 + 色深。 |
@@ -186,7 +205,7 @@ docker logs snowluma 2>&1 | \
 
 Linux QQ 自带单实例锁：在已有 QQ 跑着的桌面里直接再点一次 QQ 图标，只会把已有窗口聚焦，**起不来第二个进程**。锁文件落在 `$HOME/.config/QQ/SingletonLock`，所以解法是给第二个实例一个**独立的 `HOME`**。
 
-SnowLuma 一侧不需要任何额外配置：[HookManager](https://github.com/SnowLuma/SnowLuma/blob/main/packages/core/src/hook/hook-manager.ts) 会遍历所有 QQ 主进程，新启动一个就自动注入一个，每个 UIN 拉一个独立 `OneBotInstance`，配置存到对应的 `config/onebot_<uin>.json`。
+SnowLuma 一侧不需要任何额外配置：[HookManager](https://github.com/Roozenlz/SnowLuma/blob/main/packages/bridge/src/hook-manager.ts) 会遍历所有 QQ 主进程，新启动一个就自动注入一个，每个 UIN 拉一个独立 `OneBotInstance`，配置存到对应的 `config/onebot_<uin>.json`。
 
 ### 在 noVNC 桌面里启第二个 QQ
 
@@ -264,7 +283,7 @@ done
 想保留传统的"WebUI 里手动 Load"流程：
 
 ```bash
-docker run -e SNOWLUMA_HOOK_AUTOLOAD=0 ... motricseven7/snowluma:latest
+docker run -e SNOWLUMA_HOOK_AUTOLOAD=0 ... roozen/snowluma:latest
 ```
 
 或在 `docker-compose.yml` 改 `SNOWLUMA_HOOK_AUTOLOAD: 0`，或编辑持久卷里的 `/app/snowluma-data/config/runtime.json` 设 `"hookAutoLoad": false`。环境变量优先。
@@ -313,31 +332,69 @@ ports:
 或通过环境变量（Compose 模板已支持）：
 
 ```bash
-ONEBOT_HTTP_PORT=8080 docker compose up -d
+ONEBOT_HTTP_PORT=8080 docker compose -f docker/docker-compose.yml up -d
 ```
 
 ## 自己构建镜像
 
-如果想用未发布的 SnowLuma 版本（比如本地分支）：
+构建上下文是主仓的 `docker/` 目录，Dockerfile 从上下文里读 `SnowLuma.Framework.tar.gz`。
+
+### 用已发布的 Release 构建
 
 ```bash
-# 在 SnowLuma 主仓本地构建出 lite tarball
+git clone --depth 1 https://github.com/Roozenlz/SnowLuma.git
+cd SnowLuma
+
+TAG=v2.4.3
+gh release download "$TAG" \
+  --pattern "SnowLuma-$TAG-linux-x64-lite.tar.gz" \
+  --output docker/SnowLuma.Framework.tar.gz --clobber
+
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag roozen/snowluma:$TAG docker --load
+```
+
+### 用本地构建的产物
+
+```bash
+pnpm install --frozen-lockfile
 pnpm build:all
-# 把 SnowLuma-<TAG>-linux-x64-lite.tar.gz 放到 Docker 仓根目录并重命名
-cp dist/SnowLuma-*-linux-x64-lite.tar.gz \
-   ../SnowLuma.Docker.Framework/SnowLuma.Framework.tar.gz
 
-cd ../SnowLuma.Docker.Framework
-./scripts/build-image.sh
+tar -czf docker/SnowLuma.Framework.tar.gz -C dist .
+docker buildx build --platform linux/amd64 \
+  --file docker/Dockerfile \
+  --tag snowluma:local docker --load
 ```
 
-或者直接让脚本从 release 拉：
+`dist/` 必须包含完整的运行时布局（`index.mjs`、`native/`、`webui/`、`package.json` 等），`pnpm build:all` 产出的即是。
+
+### 多架构
+
+本地 `buildx build` 一次只能 `--load` 单个架构。需要 amd64 + arm64 合并 manifest 时走 CI：
+
+- **发版自动构建**：[`release.yml`](https://github.com/Roozenlz/SnowLuma/blob/main/.github/workflows/release.yml) 在 Release 发布后调用同一套 `docker-image.yml`。
+- **重建历史版本**：手动跑 [Rebuild Docker Image](https://github.com/Roozenlz/SnowLuma/actions/workflows/dispatch-docker-release.yml)，填 `snowluma_tag` 即可，不用重新打 tag。
+
+### 镜像里的 QQ 版本
+
+Dockerfile 从腾讯 CDN 下载 Linux QQ 的 `.deb`，版本由三个 build arg 固定：
+
+```dockerfile
+ARG QQ_VERSION=3.2.35-54395
+ARG QQ_CHANNEL=9.9.37/beta
+ARG QQ_HASH=816b3c79
+```
+
+腾讯每次发版都会换目录和内容哈希，旧值直接 404。构建日志出现 `Unable to download linuxqq_*.deb` 时，去 [AUR 的 linuxqq PKGBUILD](https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=linuxqq) 取新的三元组，覆盖后重试：
 
 ```bash
-SNOWLUMA_TAG=v1.8.0 ./scripts/build-image.sh
+docker buildx build \
+  --build-arg QQ_VERSION=3.2.36-xxxxx \
+  --build-arg QQ_CHANNEL=9.9.38/beta \
+  --build-arg QQ_HASH=xxxxxxxx \
+  --file docker/Dockerfile --tag roozen/snowluma:test docker
 ```
-
-多架构 manifest 合并请走 CI（`.github/workflows/docker-image.yml`）；本地脚本只构建单平台。
 
 ## 安全提示
 

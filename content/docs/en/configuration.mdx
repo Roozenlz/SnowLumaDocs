@@ -124,29 +124,55 @@ Optional URL for a custom music-card signing service. Empty string disables.
 
 ## Runtime config (`runtime.json`)
 
-`config/runtime.json` carries process-wide settings — **not per-account**.
+`config/runtime.json` carries process-wide settings — **not per-account**. A missing file, or one with missing fields, is backfilled and rewritten on load.
 
 ```json
 {
   "webuiPort": 5099,
-  "hookAutoLoad": false
+  "webuiHost": "127.0.0.1",
+  "hookAutoLoad": false,
+  "webuiTls": { "enabled": false },
+  "trustProxy": "",
+  "logMaxTotalMb": 1024,
+  "logRetainDays": 7,
+  "logPerUin": false
 }
 ```
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `webuiPort` | number | `5099` | WebUI listen port; out-of-range values fall back to the default. |
-| `hookAutoLoad` | bool | `false` | Auto-inject the hook into every newly discovered QQ process. The Docker image flips this on. |
+| `webuiPort` | number | `5099` | WebUI listen port; anything outside `1..65535` falls back to the default. |
+| `webuiHost` | string | `127.0.0.1` | WebUI bind address. **Loopback only by default** — set `0.0.0.0` to reach it from another machine. Listener-level: change needs a restart. |
+| `hookAutoLoad` | bool | `false` | Auto-inject the hook into every newly discovered QQ process. The Docker image turns this on via `supervisord.conf`. |
+| `webuiTls.enabled` | bool | `false` | Serve HTTPS using `config/cert.pem` + `config/key.pem`. Listener-level: change needs a restart. |
+| `trustProxy` | string | `""` | Trusted reverse-proxy directive used to resolve the client IP; empty means trust nobody. |
+| `logMaxTotalMb` | number | `1024` | Aggregate size cap for every managed file under the log root. |
+| `logRetainDays` | number | `7` | Calendar-day retention; `0` disables date-based deletion. |
+| `logPerUin` | bool | `false` | Duplicate UIN-scoped lines into `logs/<uin>/` in addition to the shared log. |
+
+<Callout type="warn">
+**`webuiHost` defaults to `127.0.0.1`** — loopback only. In Docker, override it with `SNOWLUMA_WEBUI_HOST=0.0.0.0`, otherwise the published ports cannot reach the WebUI.
+</Callout>
 
 ## Environment variables
 
-| Var | Notes |
-| --- | --- |
-| `SNOWLUMA_HOOK_AUTOLOAD` | `1` / `true` forces auto-injection on; `0` / `false` off. **Wins over `runtime.json`**, which makes Docker overrides ergonomic. |
-| `SNOWLUMA_LOG_LEVEL` | Log level (`error` / `warn` / `info` / `debug`). |
-| `SNOWLUMA_VERBOSE_WARMUP=1` | Verbose friend / group / member warm-up logs. |
-| `SNOWLUMA_DEV_MODE=1` | Enable dev mode (relaxes WebUI auth for local debugging). |
-| `SNOWLUMA_DEV_WEBUI=1` | Force-start the bundled WebUI under dev mode. |
+Environment variables **win over** `runtime.json` and apply in memory only — they are never written back, which makes them the right knob for Docker and launchers.
+
+| Var | Field | Notes |
+| --- | --- | --- |
+| `SNOWLUMA_WEBUI_PORT` | `webuiPort` | WebUI listen port. |
+| `SNOWLUMA_WEBUI_HOST` | `webuiHost` | WebUI bind address; use `0.0.0.0` in Docker. |
+| `SNOWLUMA_WEBUI_TLS` | `webuiTls.enabled` | `1` / `true` serves HTTPS, `0` / `false` off. |
+| `SNOWLUMA_WEBUI_TRUST_PROXY` | `trustProxy` | Trusted proxy directive; `0` / `off` means trust nobody. |
+| `SNOWLUMA_LOG_MAX_TOTAL_MB` | `logMaxTotalMb` | Log size cap. |
+| `SNOWLUMA_LOG_RETAIN_DAYS` | `logRetainDays` | Log retention in days. |
+| `SNOWLUMA_LOG_PER_UIN` | `logPerUin` | Per-UIN log directories. |
+| `SNOWLUMA_HOOK_AUTOLOAD` | `hookAutoLoad` | `1` / `true` forces auto-injection on; `0` / `false` off. |
+| `SNOWLUMA_LOG_LEVEL` | — | Log level (`error` / `warn` / `info` / `debug`). |
+| `SNOWLUMA_VERBOSE_WARMUP` | — | Set to `1` for verbose friend / group / member warm-up logs. |
+| `SNOWLUMA_DEV_MODE` | — | Set to `1` for dev mode (relaxes WebUI auth; local debugging only). |
+| `SNOWLUMA_DEV_WEBUI` | — | Set to `1` to force-start the bundled WebUI under dev mode. |
+| `SNOWLUMA_ACCEPT_EULA` / `SNOWLUMA_ACCEPT_PRIVACY` | — | Set both to `1` to skip the first-boot consent page for unattended deployments. |
 
 ## Port conflicts
 

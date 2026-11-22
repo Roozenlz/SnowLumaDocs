@@ -3,72 +3,44 @@ title: Introduction
 description: A Remote Protocol Framework for NTQQ
 ---
 
-SnowLuma is a Remote Protocol Framework for NTQQ. It's in early, fast-moving development with a partial feature set. Windows and macOS run it natively; Linux runs it inside a [Docker container](/docs/docker) (headed QQ on Xvfb + VNC).
-
-The codebase is a TypeScript + native-module hybrid: TypeScript handles the runtime, bridge, OneBot, and WebUI; native modules cover the QQ process hook, injection, and the low-level WebSocket implementation.
+SnowLuma is a Remote Protocol Framework for NTQQ, bridging QQ sessions into the OneBot v11 ecosystem with a structured API for bot development.
 
 ## What you can use it for
 
 - **OneBot v11**: HTTP, WebSocket, reverse WebSocket, and HTTP event-reporting adapters.
 - **NTQQ bridge**: capture and decode NTQQ packets through the hook, translate them to higher-level events and actions.
 - **Multi-account sessions**: one OneBot instance per UIN, with per-account config that inherits from the global file.
-- **Built-in WebUI**: the full build ships a web console for status and adapter management.
-- **TypeScript SDK**: `@snowluma/sdk` is a typed OneBot HTTP / WS client.
+- **Built-in WebUI**: the full build ships a web console for status, adapter management, and staged updates.
+- **TypeScript SDK and MCP**: `@snowluma/sdk` is a typed OneBot client; `@snowluma/mcp` exposes the same action catalog to agents.
 
 ## Requirements
 
 | Item | Required |
 | --- | --- |
-| Node.js | `>= 22` |
-| Package manager | `pnpm ≥ 10` (repo pins `10.28.0`) |
-| QQ client | NTQQ, headed |
-| Native addon | Matching `.node` / `.dll` / `.so` for your platform |
-| OS | Windows / macOS native; Linux via Docker |
+| Windows / macOS | Native run; bring your own Node.js |
+| Linux | Runs [inside Docker](/docs/docker) only (the image bundles QQ + Xvfb + VNC) |
+| Node.js | `^24.22.1` or `>=26.12.1` (bundled in the full distribution) |
+| QQ | NTQQ with a visible window |
 
-## Three ways to run it
+## Two ways to run it
 
 | Use case | Recommended path |
 | --- | --- |
-| Server deployment | [Docker container](/docs/docker) — image bundles QQ + Xvfb + VNC, works out of the box |
-| Local prebuilt | Grab the matching `lite` / full tarball from [GitHub Releases](https://github.com/SnowLuma/SnowLuma/releases), unpack, `node ./index.mjs` |
-| From source | `pnpm install && pnpm dev` |
+| Server deployment | [Docker container](/docs/docker) — the image bundles QQ + Xvfb + VNC and works out of the box |
+| Local prebuilt | Grab the matching tarball from [GitHub Releases](https://github.com/Roozenlz/SnowLuma/releases), unpack, run the launcher |
 
-## Quick start from source
+## Release asset names
 
-```bash
-git clone https://github.com/SnowLuma/SnowLuma.git
-cd SnowLuma
-pnpm install
-pnpm build:all
-pnpm start
-```
+Every tag publishes three platforms — Windows x64, Linux x64, and Linux arm64:
 
-Dev mode (core with reload):
-
-```bash
-pnpm dev
-```
-
-WebUI HMR alone:
-
-```bash
-pnpm dev:web
-```
-
-## Common scripts
-
-| Command | What it does |
+| File | Notes |
 | --- | --- |
-| `pnpm dev` | Start `@snowluma/core` in dev mode. |
-| `pnpm dev:web` | Start the WebUI Vite dev server. |
-| `pnpm build` | Build the core runtime only. |
-| `pnpm build:webui` | Build the WebUI only. |
-| `pnpm build:sdk` | Build the publishable SDK package. |
-| `pnpm build:all` | Build core + SDK + WebUI. |
-| `pnpm start` | Run `dist/index.mjs`. |
-| `pnpm test` | Run core tests. |
-| `pnpm typecheck` | Type-check the whole workspace. |
-| `pnpm lint` | Run the linter. |
+| `SnowLuma-<TAG>-win-x64.zip` | Windows full build with Node.js bundled |
+| `SnowLuma-<TAG>-linux-x64.tar.gz` | Linux x64 full build |
+| `SnowLuma-<TAG>-linux-arm64.tar.gz` | Linux arm64 full build |
+| `...-lite.zip` / `...-lite.tar.gz` | No bundled Node.js; requires `^24.22.1` or `>=26.12.1` |
+
+The full build unpacks and runs; the lite build is much smaller and suits containers or hosts that already have Node installed.
 
 ## Distribution layout
 
@@ -78,40 +50,40 @@ pnpm dev:web
 dist/
 ├─ index.mjs            # main entry
 ├─ launcher.bat         # Windows launcher
+├─ launcher.sh          # Linux launcher
 ├─ package.json
+├─ release.json         # release manifest (version, target, file list)
 ├─ webui/               # bundled WebUI assets
 └─ native/              # platform natives
-   ├─ snowluma-win32-x64.node
-   ├─ snowluma-win32-x64.dll
-   ├─ snowluma-linux-x64.node
-   ├─ snowluma-linux-x64.so
+   ├─ snowluma-<platform>-<arch>.node
+   ├─ snowluma-<platform>-<arch>.so / .dll
    └─ websocket-<platform>-<arch>.node
 ```
 
-`launcher.bat` on Windows:
+After unpacking, run `launcher.bat` on Windows or `./launcher.sh` on Linux.
 
-```bat
-node ./index.mjs
-pause
-```
+## Quick start
 
-GitHub Releases also publish two tarball flavors per platform:
+1. Unpack the archive that matches your architecture.
+2. Open `http://localhost:5099`.
+3. Sign in with the initial credentials from the startup log, then attach the QQ process and configure OneBot.
 
-- `SnowLuma-<TAG>-<platform>-<arch>.tar.gz` — full package with the bundled Node.js runtime.
-- `SnowLuma-<TAG>-<platform>-<arch>-lite.tar.gz` — no Node.js (smaller; meant for containers or machines that already have Node 22+).
+For unattended deployments, set both `SNOWLUMA_ACCEPT_EULA=1` and `SNOWLUMA_ACCEPT_PRIVACY=1` to accept the bundled agreements up front; missing either one still shows the consent page.
 
 ## Default services
 
-Starting an OneBot instance creates `config/onebot.json`, `config/onebot_<uin>.json`, and `config/runtime.json` on first run.
+The first time an OneBot instance starts, SnowLuma creates `config/onebot.json`, `config/onebot_<uin>.json`, and `config/runtime.json`.
 
-| Service | Default URL | Configured by |
+| Service | Default address | Config key |
 | --- | --- | --- |
 | OneBot HTTP | `http://0.0.0.0:3000/` | `networks.httpServers[].port` |
 | OneBot WebSocket | `ws://0.0.0.0:3001/` | `networks.wsServers[].port` |
 | WebUI | `http://0.0.0.0:5099/` | `runtime.json` → `webuiPort` |
 
-Full field reference: [Configuration](/docs/configuration).
+See the [configuration reference](/docs/configuration) for every field.
 
-## Status
+## Licensing and scope
 
-SnowLuma is still in early development; breaking changes are common. When you hit a missing API, a missing platform native, or unexpected OneBot behavior, check the current branch's README, config files, and build artefacts first.
+SnowLuma is **source-available under a non-commercial license**, not OSI open source. You may read, study, self-host non-commercially, and modify it privately. Commercial use, and public distribution of modified or derivative versions, require prior written permission. Binary releases are additionally covered by the bundled EULA and privacy policy.
+
+SnowLuma is an independent third-party project with no affiliation or authorization from Tencent / QQ. It is provided for study and research, "as is" and without warranty; follow the QQ terms of service and applicable law.

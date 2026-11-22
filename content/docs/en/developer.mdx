@@ -5,31 +5,54 @@ description: Monorepo layout, runtime startup chain, and contribution notes
 
 SnowLuma is a TypeScript + native-module hybrid. TypeScript handles runtime orchestration, the OneBot implementation, the protocol bridge, the SDK, and the WebUI; native modules cover the hook, injection, and the high-performance WebSocket implementation.
 
+## Requirements
+
+| Item | Required | Source of truth |
+| --- | --- | --- |
+| Node.js | `^24.22.1` or `>=26.12.1` | `engines` in `package.json`; older 24.x releases are below the security baseline |
+| pnpm | `11.25.0` (pinned) | `packageManager` field |
+| QQ | NTQQ with a visible window | the hook needs a headed client |
+
+`.node-version` pins `24.22.1`; CI and the release bundles build against it. Changing that pin alone does not upgrade an existing installation's runtime.
+
 ## Monorepo layout
 
-pnpm workspace with five packages:
+pnpm workspace with fourteen packages:
 
 ```text
 SnowLuma/
 ├─ packages/
-│  ├─ core/        @snowluma/core       Bridge / OneBot / Hook orchestration
-│  ├─ websocket/   @snowluma/websocket  In-tree WS impl (uses native addon)
-│  ├─ sdk/         @snowluma/sdk        Typed OneBot client for external use
+│  ├─ core/        @snowluma/core       entry, bridge orchestration, WebUI backend, release assembly
+│  ├─ bridge/      @snowluma/bridge     QQ process discovery, login detection, hook sessions
+│  ├─ protocol/    @snowluma/protocol   packet decoding, typed QQ events, identity resolution
+│  ├─ onebot/      @snowluma/onebot     action validation and dispatch, event conversion, adapters
+│  ├─ common/      @snowluma/common     logging, config, version, shared utilities
+│  ├─ sqlite/      @snowluma/sqlite     async SQLite facade, native loader, prebuild selection
+│  ├─ proto-defs/  @snowluma/proto-defs typed protocol schemas
+│  ├─ proton/      @snowluma/proton     compile-time protobuf codecs and build integration
+│  ├─ websocket/   @snowluma/websocket  in-tree WS implementation (native fast path)
+│  ├─ runtime/     @snowluma/runtime    distribution manifest, launchers, bundled natives
 │  ├─ webui/       webui                React + Vite console
-│  └─ runtime/     distribution templates (launcher, package.json, scripts)
-├─ native/         per-platform native artefacts (.node / .dll / .so)
-├─ dist/           build output
-├─ tools/          helper scripts (version bump, release, etc.)
-├─ docs/           ADRs and developer notes
+│  ├─ ui/          @snowluma/ui         published UI component package
+│  ├─ sdk/         @snowluma/sdk        typed OneBot client for external use
+│  └─ mcp/         @snowluma/mcp        MCP server and generated action catalog
+├─ docker/         container build inputs (Dockerfile / start.sh / supervisord / compose)
+├─ tools/          helper scripts (version bump, release, release-layout check)
+├─ compat/         compatibility layer
+├─ assets/         README and documentation imagery
 └─ package.json
 ```
 
+Native artefacts live in `packages/runtime/native/` and are copied into `dist/native/` by the build.
+
 ## Core startup chain
 
-Entry point: [`packages/core/src/index.ts`](https://github.com/SnowLuma/SnowLuma/blob/main/packages/core/src/index.ts).
+Entry point: [`packages/core/src/index.ts`](https://github.com/Roozenlz/SnowLuma/blob/main/packages/core/src/index.ts).
 
 ```text
 loadRuntimeConfig()           ← reads config/runtime.json / env
+  ↓
+applyPendingUpdate()          ← lands a staged update before anything else
   ↓
 HookManager(autoLoadOnDiscovery)
   ↓
@@ -47,9 +70,11 @@ What the runtime creates:
 - **`OneBotManager`** — owns `OneBotInstance`s keyed by UIN; each instance has its own `MessageStore`, `MediaStore`, and `NetworkManager`.
 - **`initWebUI`** — full builds boot the WebUI; default port `5099` (override via `runtime.json.webuiPort`).
 
+Core stays a single bundle and native libraries load lazily, so startup can recover an interrupted update before opening any native file.
+
 ## Hook + native modules
 
-The native hook module is loaded via `process.dlopen()`. Source lives in the separate [`dev/nnphook`](https://github.com/SnowLuma/nnphook) repo.
+The native hook module is loaded via `process.dlopen()`. Source lives in the separate [`SnowLuma/nnphook`](https://github.com/SnowLuma/nnphook) repo.
 
 Filename convention:
 
@@ -58,6 +83,8 @@ snowluma-win32-x64.node    snowluma-win32-x64.dll
 snowluma-linux-x64.node    snowluma-linux-x64.so
 snowluma-linux-arm64.node  snowluma-linux-arm64.so
 ```
+
+WebSocket natives follow the same rule: `websocket-<platform>-<arch>.node`.
 
 Load search paths:
 
@@ -73,7 +100,7 @@ Native addon API:
 - **`loadModuleManual`** — manually map the injection module into the target process.
 - **`unloadModuleManual`** — unload an injected module.
 
-Default target process is `QQ.exe` on Windows, `qq` on Linux.
+Default target process is `QQ.exe` on Windows, `qq` on Linux. The interface is fully async, so the application and the native artefacts must be updated together.
 
 ## OneBot lifecycle
 
@@ -100,7 +127,7 @@ Exports:
 
 Loads its own platform-specific `.node` from the same `native/` search paths.
 
-## SDK package
+## SDK and MCP
 
 `@snowluma/sdk` is a typed OneBot client meant for downstream consumers:
 
@@ -108,21 +135,25 @@ Loads its own platform-specific `.node` from the same `native/` search paths.
 - Auto-reconnect, event subscription, ack correlation.
 - Shares action types with `@snowluma/core` so they cannot drift.
 
-Standalone-publishable to npm; doesn't depend on the SnowLuma runtime.
+`@snowluma/mcp` exposes the action catalog as MCP tools for agent callers. Both publish to npm independently of the SnowLuma runtime.
 
 ## Dev scripts
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile   # resolve dependency changes properly; don't drop the lockfile
 pnpm dev              # core dev mode
 pnpm dev:web          # WebUI dev server
 pnpm build            # core only
 pnpm build:webui      # WebUI only
 pnpm build:sdk        # SDK only
-pnpm build:all        # core + SDK + WebUI
-pnpm test             # core tests
+pnpm build:mcp        # MCP only
+pnpm build:all        # core + SDK + MCP + UI + WebUI
+pnpm test             # workflow policy checks + all workspace tests
+pnpm test:workflows   # repository policy tests; no GitHub writes
+pnpm test:native      # native smoke tests (needs matching natives)
 pnpm typecheck        # workspace typecheck
 pnpm lint             # workspace lint
+pnpm ci               # reproduce every CI command locally
 ```
 
 ## Build order
@@ -135,24 +166,68 @@ pnpm build:all
 
 Runs, in order:
 
-1. `@snowluma/core` full build
+1. `@snowluma/core` full build (`BUILD_WEBUI=true`)
 2. `@snowluma/sdk`
-3. `webui`
+3. `@snowluma/mcp`
+4. `webui` (with `@snowluma/ui` built first)
 
-Output goes to the repo root `dist/`.
+Output goes to the repo root `dist/`; `pnpm check:release-layout` then validates the file manifest and native artefacts.
+
+## Versioning and release
+
+The root `package.json` owns the version; packages read it through `@snowluma/common/version`.
+
+```bash
+pnpm bump 2.4.3        # sync the root and every workspace package
+pnpm release 2.4.3     # full pipeline: CI → bump → dev → Promote → main → tag
+pnpm release 2.4.3 --dry-run   # print the plan only
+```
+
+`pnpm release` relies on the `chore(release): vX.Y.Z` commit on `dev` to trigger the Promote workflow. Re-run the same command to resume a pipeline that failed part-way; never amend the release commit.
+
+If you only maintain your own fork and skip Promote, bump and tag by hand:
+
+```bash
+# after updating version in every package.json
+git commit -am "chore(release): v2.4.3"
+git tag -a v2.4.3 -m "v2.4.3"
+git push origin main v2.4.3
+```
+
+The tag triggers `release.yml`: three-platform build → GitHub Release → Docker image publication.
+
+## CI workflows
+
+| Workflow | Trigger | Purpose |
+| --- | --- | --- |
+| `ci.yml` | PR / push | test, typecheck, build, lint |
+| `dev-build.yml` | any branch push | three-platform build; `dev` also publishes the `dev` image |
+| `release.yml` | `v*` tag | release + Docker image publication |
+| `docker-image.yml` | called by the two above | reusable image build implementation |
+| `dispatch-docker-release.yml` | manual | rebuild a historical tag's image without re-tagging |
+
+Repository configuration the image build needs:
+
+| Kind | Name | Purpose |
+| --- | --- | --- |
+| Secret | `DOCKERHUB_USERNAME` | Docker Hub account |
+| Secret | `DOCKERHUB_TOKEN` | Access token with Read & Write |
+| Variable | `DOCKER_IMAGE` | Image name, e.g. `roozen/snowluma` |
+| Variable | `DOCKER_PLATFORMS` | e.g. `linux/amd64,linux/arm64` |
 
 ## Docs site
 
-The docs site lives in a separate repo: [`SnowLuma/SnowLumaDocs`](https://github.com/SnowLuma/SnowLumaDocs). Local development usually checks it out at `dev/SnowLumaDocs/` alongside SnowLuma.
+This site lives in [`Roozenlz/SnowLumaDocs`](https://github.com/Roozenlz/SnowLumaDocs).
 
-Stack: Next.js 16 + Fumadocs 16 + Tailwind 4 + MDX.
+Stack: Next.js 16 + Fumadocs + Tailwind 4 + MDX. Pushing to `main` static-exports to `gh-pages` via `.github/workflows/deploy.yml`.
 
-The OneBot API reference is generated by the docs repo's `pnpm openapi:generate`, which AST-scans `packages/core/src/onebot/actions/` and writes `content/api/openapi.json`. Re-run after adding or renaming actions.
+The OneBot API reference is generated by the docs repo's `tools/generate-onebot-openapi.mjs`, which statically scans the action definitions in the main repo and writes `content/api/openapi.json`. Re-run after adding or renaming actions.
 
 ## Contribution notes
 
 - **Don't bypass `BridgeManager`** — every OneBot action should reach NTQQ through `BridgeInterface`. Keeps the OneBot layer decoupled and testable.
 - **Keep configs auto-generatable** — new fields must stay backwards-compatible; normalize them on load and write the result back.
 - **Native modules are per-platform** — when adding a platform, sync the `.node` and the injectable library.
-- **Tests first** — core OneBot behavior should be validated with `vitest`; see `packages/core/tests/`.
-- **OpenAPI automation** — after adding a `registerAction`, run `pnpm openapi:generate` in the docs repo so the API reference doesn't drift.
+- **Tests first** — core OneBot behavior should be validated with `vitest`; see each package's `tests/`.
+- **Regenerate the action catalog** — after changing an action, run `pnpm --filter @snowluma/mcp gen` and commit the generated `catalog.ts` / `catalog.json`; `tools/check-action-catalog.mjs` rejects drift in CI.
+- **Formatting** — TypeScript uses four-space indentation via `pnpm format`; don't hand-adjust style in business code.
